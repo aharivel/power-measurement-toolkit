@@ -1,0 +1,607 @@
+#!/bin/bash
+#
+# Setup Tuned Profiles for Power Measurement Tests
+#
+# This script creates tuned profiles for all test scenarios:
+# - Test 1: Idle with C6 state (nominal and min frequency)
+# - Test 2: Idle with C1 state (nominal and min frequency)
+# - Test 3: CPU stress test (nominal and min frequency)
+# - Test 4: DPDK workload (nominal and min frequency)
+#
+# Usage: sudo ./setup_tuned_profiles.sh
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNED_BASE_DIR="/etc/tuned"
+
+# CPU frequency values (kHz)
+MIN_FREQ=800000
+NOMINAL_FREQ=2300000
+
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "ERROR: Must run as root (use sudo)" >&2
+        exit 1
+    fi
+}
+
+create_profile_test1_c6_nominal() {
+    local profile_name="powertest-1-c6-nominal"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 1: Idle with C6 state, Nominal frequency (2300 MHz)
+#
+
+[main]
+summary=Power Test 1: Idle C6 @ 2300MHz
+include=latency-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=powersave
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to nominal (2300 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states (including C6)
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test1_c6_min() {
+    local profile_name="powertest-1-c6-min"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 1: Idle with C6 state, Minimum frequency (800 MHz)
+#
+
+[main]
+summary=Power Test 1: Idle C6 @ 800MHz
+include=latency-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=powersave
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to minimum (800 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states (including C6)
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test2_c1_nominal() {
+    local profile_name="powertest-2-c1-nominal"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 2: Idle with C1 state, Nominal frequency (2300 MHz)
+#
+
+[main]
+summary=Power Test 2: Idle C1 @ 2300MHz
+include=latency-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to nominal (2300 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Disable C1E and C6, keep only C1
+    for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu/cpuidle" ] || continue
+        # Enable POLL and C1
+        [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
+        # Disable C1E and C6
+        [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    # Re-enable all C-states
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test2_c1_min() {
+    local profile_name="powertest-2-c1-min"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 2: Idle with C1 state, Minimum frequency (800 MHz)
+#
+
+[main]
+summary=Power Test 2: Idle C1 @ 800MHz
+include=latency-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to minimum (800 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Disable C1E and C6, keep only C1
+    for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu/cpuidle" ] || continue
+        [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test3_stress_nominal() {
+    local profile_name="powertest-3-stress-nominal"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 3: CPU Stress test, Nominal frequency (2300 MHz)
+#
+
+[main]
+summary=Power Test 3: Stress @ 2300MHz
+include=throughput-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to nominal (2300 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test3_stress_min() {
+    local profile_name="powertest-3-stress-min"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 3: CPU Stress test, Minimum frequency (800 MHz)
+#
+
+[main]
+summary=Power Test 3: Stress @ 800MHz
+include=throughput-performance
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to minimum (800 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test4_dpdk_nominal() {
+    local profile_name="powertest-4-dpdk-nominal"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 4: DPDK workload, Nominal frequency (2300 MHz)
+# With CPU isolation
+#
+
+[main]
+summary=Power Test 4: DPDK @ 2300MHz
+include=cpu-partitioning
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[variables]
+# Isolate CPUs 4-19 (physical cores, thread 0) for DPDK
+# Keep 0-3 for housekeeping
+isolated_cores=4-19
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+
+[bootloader]
+# Requires reboot to take effect
+cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to nominal (2300 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+create_profile_test4_dpdk_min() {
+    local profile_name="powertest-4-dpdk-min"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<'EOF'
+#
+# Test 4: DPDK workload, Minimum frequency (800 MHz)
+# With CPU isolation
+#
+
+[main]
+summary=Power Test 4: DPDK @ 800MHz
+include=cpu-partitioning
+
+[cpu]
+governor=userspace
+energy_perf_bias=performance
+
+[variables]
+isolated_cores=4-19
+
+[script]
+script=${i:PROFILE_DIR}/script.sh
+
+[bootloader]
+cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+EOF
+
+    cat > "$profile_dir/script.sh" <<'EOF'
+#!/bin/bash
+. /usr/lib/tuned/functions
+
+start() {
+    # Disable turbo
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+
+    # Set frequency to minimum (800 MHz)
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        [ -d "$cpu_dir/cpufreq" ] || continue
+        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+    done
+
+    # Enable all C-states
+    for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+        [ -d "$state_dir" ] || continue
+        echo 0 > "$state_dir/disable" 2>/dev/null || true
+    done
+
+    return 0
+}
+
+stop() {
+    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    return 0
+}
+
+process $@
+EOF
+
+    chmod +x "$profile_dir/script.sh"
+    echo "  ✓ Created $profile_name"
+}
+
+main() {
+    echo "========================================="
+    echo "Setting up Tuned Profiles"
+    echo "========================================="
+    echo ""
+
+    check_root
+
+    # Check if tuned is installed
+    if ! command -v tuned-adm &>/dev/null; then
+        echo "ERROR: tuned is not installed" >&2
+        echo "Install it with: sudo dnf install tuned" >&2
+        exit 1
+    fi
+
+    echo "Creating 8 tuned profiles for power measurement tests..."
+    echo ""
+
+    # Test 1: Idle C6
+    create_profile_test1_c6_nominal
+    create_profile_test1_c6_min
+
+    # Test 2: Idle C1
+    create_profile_test2_c1_nominal
+    create_profile_test2_c1_min
+
+    # Test 3: Stress
+    create_profile_test3_stress_nominal
+    create_profile_test3_stress_min
+
+    # Test 4: DPDK
+    create_profile_test4_dpdk_nominal
+    create_profile_test4_dpdk_min
+
+    echo ""
+    echo "========================================="
+    echo "✓ All profiles created successfully!"
+    echo "========================================="
+    echo ""
+    echo "Available profiles:"
+    echo "  Test 1 (Idle C6):"
+    echo "    - powertest-1-c6-nominal  (2300 MHz)"
+    echo "    - powertest-1-c6-min      (800 MHz)"
+    echo ""
+    echo "  Test 2 (Idle C1):"
+    echo "    - powertest-2-c1-nominal  (2300 MHz)"
+    echo "    - powertest-2-c1-min      (800 MHz)"
+    echo ""
+    echo "  Test 3 (Stress):"
+    echo "    - powertest-3-stress-nominal  (2300 MHz)"
+    echo "    - powertest-3-stress-min      (800 MHz)"
+    echo ""
+    echo "  Test 4 (DPDK):"
+    echo "    - powertest-4-dpdk-nominal  (2300 MHz)"
+    echo "    - powertest-4-dpdk-min      (800 MHz)"
+    echo ""
+    echo "Usage:"
+    echo "  tuned-adm profile powertest-1-c6-nominal"
+    echo "  tuned-adm active"
+    echo ""
+    echo "Note: Test 4 profiles require reboot for CPU isolation to take effect"
+}
+
+main "$@"
