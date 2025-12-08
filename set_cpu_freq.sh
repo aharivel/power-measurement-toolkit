@@ -107,17 +107,16 @@ set_frequency() {
             }
         fi
 
-        # Set the frequency
+        # CRITICAL: Set min/max FIRST to remove any restrictions
+        # Then set setspeed - this ensures the frequency is not clamped
+        echo "$target_freq" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
+        echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
+
+        # Set the frequency via setspeed
         if [ -f "$cpufreq_dir/scaling_setspeed" ]; then
             echo "$target_freq" > "$cpufreq_dir/scaling_setspeed" 2>/dev/null || {
-                echo "  CPU$cpu_num: ERROR - failed to set frequency" >&2
-                ((fail_count++))
-                continue
+                echo "  CPU$cpu_num: WARNING - failed to set scaling_setspeed" >&2
             }
-        else
-            # Fallback: set min and max to same value
-            echo "$target_freq" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
-            echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
         fi
 
         ((success_count++))

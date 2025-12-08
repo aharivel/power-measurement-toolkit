@@ -2,6 +2,27 @@
 
 Tools for measuring CPU frequency impact on power consumption for Dell PowerEdge R450 server.
 
+## Quick Start
+
+```bash
+# 1. Install tools
+sudo dnf install ipmitool stress-ng numactl kernel-tools tuned
+
+# 2. Switch to passive mode (CRITICAL!)
+echo passive | sudo tee /sys/devices/system/cpu/intel_pstate/status
+
+# 3. Validate setup
+./validate_setup.sh
+
+# 4. Install tuned profiles
+sudo ./setup_tuned_profiles.sh
+
+# 5. Run a test
+sudo ./manage_test_profile.sh set powertest-1-c6-nominal
+./manage_test_profile.sh verify
+sudo ./power_monitor.py --duration 300 --output test1_c6_nominal.csv
+```
+
 ## Components
 
 ### 1. System Information Gatherer (`gather_system_info.sh`)
@@ -209,24 +230,43 @@ timestamp,timestamp_unix,ipmi_watts,rapl_pkg_watts,rapl_energy_uj
 
 ## Installation
 
-### Install Required Tools
+### 1. Install Required Tools
 ```bash
-sudo dnf install ipmitool stress-ng numactl kernel-tools
+sudo dnf install ipmitool stress-ng numactl kernel-tools tuned
 ```
 
-### Load MSR Module (if not loaded)
+### 2. Enable Tuned Service
+```bash
+sudo systemctl enable --now tuned
+```
+
+### 3. Switch intel_pstate to Passive Mode (CRITICAL!)
+```bash
+# Check current mode
+cat /sys/devices/system/cpu/intel_pstate/status
+
+# If it shows "active", switch to passive
+echo passive | sudo tee /sys/devices/system/cpu/intel_pstate/status
+
+# Verify it switched
+cat /sys/devices/system/cpu/intel_pstate/status
+```
+
+**Why passive mode?** The userspace governor (required for precise frequency control) is only available in passive mode.
+
+### 4. Load MSR Module (if not loaded)
 ```bash
 sudo modprobe msr
 ```
 
-### Make Scripts Executable
+### 5. Make Scripts Executable
 ```bash
-chmod +x gather_system_info.sh power_monitor.py
+chmod +x *.sh *.py
 ```
 
 ## Test Scenarios
 
-All tests will run at **nominal (3400 MHz)** and **minimum (800 MHz)** CPU frequencies.
+All tests will run at **nominal (2300 MHz)** and **minimum (800 MHz)** CPU frequencies.
 
 ### Test 1: Idle with C6 State
 - 1 core for housekeeping

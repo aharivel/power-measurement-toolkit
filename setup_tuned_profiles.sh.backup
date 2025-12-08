@@ -66,6 +66,8 @@ start() {
         # Set min/max first to remove restrictions
         echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
         echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
@@ -129,8 +131,6 @@ start() {
         # Set min/max first to remove restrictions
         echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
@@ -192,6 +192,8 @@ start() {
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
         echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
@@ -265,8 +267,6 @@ start() {
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
@@ -398,8 +398,6 @@ start() {
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
@@ -539,8 +537,6 @@ start() {
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
         echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
