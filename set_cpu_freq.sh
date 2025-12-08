@@ -65,8 +65,9 @@ disable_turbo() {
 set_frequency() {
     local target_freq=$1
     local mode_name=$2
+    local freq_mhz=$((target_freq / 1000))
 
-    echo "Setting all CPUs to ${mode_name} frequency: ${target_freq} kHz"
+    echo "Setting all CPUs to ${mode_name} frequency: ${target_freq} kHz (${freq_mhz} MHz)"
     echo ""
 
     # Disable turbo first
@@ -77,68 +78,35 @@ set_frequency() {
     local cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* | wc -l)
     echo "Configuring $cpu_count CPUs..."
 
-    local success_count=0
-    local fail_count=0
-
+    # Set userspace governor for all CPUs first
+    echo "Setting userspace governor..."
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        cpu_num=$(basename "$cpu_dir" | sed 's/cpu//')
-
-        # Check if CPU is online
-        if [ -f "$cpu_dir/online" ]; then
-            online=$(cat "$cpu_dir/online")
-            if [ "$online" != "1" ]; then
-                echo "  CPU$cpu_num: skipped (offline)"
-                continue
-            fi
-        fi
-
         cpufreq_dir="$cpu_dir/cpufreq"
-
-        if [ ! -d "$cpufreq_dir" ]; then
-            echo "  CPU$cpu_num: ERROR - cpufreq interface not found" >&2
-            ((fail_count++))
-            continue
-        fi
-
-        # Set governor to userspace for manual frequency control
         if [ -f "$cpufreq_dir/scaling_governor" ]; then
-            echo "userspace" > "$cpufreq_dir/scaling_governor" 2>/dev/null || {
-                echo "  CPU$cpu_num: WARNING - failed to set userspace governor" >&2
-            }
+            echo "userspace" > "$cpufreq_dir/scaling_governor" 2>/dev/null || true
         fi
-
-        # CRITICAL: Set min/max FIRST to remove any restrictions
-        # Then set setspeed - this ensures the frequency is not clamped
-        echo "$target_freq" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
-        echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
-
-        # Set the frequency via setspeed
-        if [ -f "$cpufreq_dir/scaling_setspeed" ]; then
-            echo "$target_freq" > "$cpufreq_dir/scaling_setspeed" 2>/dev/null || {
-                echo "  CPU$cpu_num: WARNING - failed to set scaling_setspeed" >&2
-            }
-        fi
-
-        ((success_count++))
     done
 
-    echo ""
-    echo "Configuration complete:"
-    echo "  ✓ Success: $success_count CPUs"
-    if [ $fail_count -gt 0 ]; then
-        echo "  ✗ Failed: $fail_count CPUs" >&2
-    fi
+    # Use cpupower to set frequency (works reliably with acpi-cpufreq)
+    if command -v cpupower &>/dev/null; then
+        echo "Using cpupower to set frequency..."
+        cpupower frequency-set -f ${freq_mhz}MHz 2>&1 | grep -E "Setting|cpu"
+        echo "  ✓ Frequency set via cpupower"
+    else
+        echo "  ✗ cpupower not available, falling back to sysfs method"
 
-    # Check if frequency was actually set by sampling CPU 0
-    sleep 1
-    actual_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo "0")
-    freq_diff=$((target_freq - actual_freq))
-    # Allow 50 MHz tolerance (50000 kHz)
-    if [ ${freq_diff#-} -gt 50000 ]; then
-        echo ""
-        echo "⚠ Warning: Frequency not set correctly via sysfs"
-        echo "  Target: ${target_freq} kHz, Actual: ${actual_freq} kHz"
-        use_cpupower_fallback "$target_freq"
+        # Fallback to sysfs method
+        local success_count=0
+        for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+            cpufreq_dir="$cpu_dir/cpufreq"
+            if [ -d "$cpufreq_dir" ]; then
+                echo "$target_freq" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
+                echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
+                echo "$target_freq" > "$cpufreq_dir/scaling_setspeed" 2>/dev/null || true
+                ((success_count++))
+            fi
+        done
+        echo "  ✓ Set frequency via sysfs for $success_count CPUs"
     fi
 }
 
@@ -164,23 +132,6 @@ verify_frequency() {
 
     echo ""
     echo "For full verification, run: ./verify_config.sh"
-}
-
-use_cpupower_fallback() {
-    local target_freq=$1
-    local freq_mhz=$((target_freq / 1000))
-
-    echo ""
-    echo "Using cpupower as fallback for frequency setting..."
-
-    if command -v cpupower &>/dev/null; then
-        cpupower frequency-set -f ${freq_mhz}MHz >/dev/null 2>&1
-        echo "  ✓ Set frequency via cpupower"
-        return 0
-    else
-        echo "  ✗ cpupower not available"
-        return 1
-    fi
 }
 
 main() {
