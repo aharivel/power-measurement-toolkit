@@ -41,11 +41,11 @@ create_profile_test1_c6_nominal() {
 
 [main]
 summary=Power Test 1: Idle C6 @ 2300MHz
-include=latency-performance
 
 [cpu]
 governor=userspace
 energy_perf_bias=powersave
+# Do NOT set force_latency or include latency-performance - they block C6!
 
 [script]
 script=${i:PROFILE_DIR}/script.sh
@@ -104,8 +104,6 @@ create_profile_test1_c6_min() {
 
 [main]
 summary=Power Test 1: Idle C6 @ 800MHz
-include=latency-performance
-
 [cpu]
 governor=userspace
 energy_perf_bias=powersave
@@ -169,8 +167,6 @@ create_profile_test2_c1_nominal() {
 
 [main]
 summary=Power Test 2: Idle C1 @ 2300MHz
-include=latency-performance
-
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -242,8 +238,6 @@ create_profile_test2_c1_min() {
 
 [main]
 summary=Power Test 2: Idle C1 @ 800MHz
-include=latency-performance
-
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -314,8 +308,6 @@ create_profile_test3_stress_nominal() {
 
 [main]
 summary=Power Test 3: Stress @ 2300MHz
-include=throughput-performance
-
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -376,8 +368,6 @@ create_profile_test3_stress_min() {
 
 [main]
 summary=Power Test 3: Stress @ 800MHz
-include=throughput-performance
-
 [cpu]
 governor=userspace
 energy_perf_bias=performance
