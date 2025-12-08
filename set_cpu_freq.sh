@@ -128,12 +128,27 @@ set_frequency() {
     if [ $fail_count -gt 0 ]; then
         echo "  ✗ Failed: $fail_count CPUs" >&2
     fi
+
+    # Check if frequency was actually set by sampling CPU 0
+    sleep 1
+    actual_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo "0")
+    freq_diff=$((target_freq - actual_freq))
+    # Allow 50 MHz tolerance (50000 kHz)
+    if [ ${freq_diff#-} -gt 50000 ]; then
+        echo ""
+        echo "⚠ Warning: Frequency not set correctly via sysfs"
+        echo "  Target: ${target_freq} kHz, Actual: ${actual_freq} kHz"
+        use_cpupower_fallback "$target_freq"
+    fi
 }
 
 verify_frequency() {
     echo ""
     echo "Verifying frequency settings..."
     echo ""
+
+    # Wait a moment for frequencies to settle
+    sleep 1
 
     # Sample a few CPUs
     for cpu_num in 0 1 10 20 30; do
@@ -149,6 +164,23 @@ verify_frequency() {
 
     echo ""
     echo "For full verification, run: ./verify_config.sh"
+}
+
+use_cpupower_fallback() {
+    local target_freq=$1
+    local freq_mhz=$((target_freq / 1000))
+
+    echo ""
+    echo "Using cpupower as fallback for frequency setting..."
+
+    if command -v cpupower &>/dev/null; then
+        cpupower frequency-set -f ${freq_mhz}MHz >/dev/null 2>&1
+        echo "  ✓ Set frequency via cpupower"
+        return 0
+    else
+        echo "  ✗ cpupower not available"
+        return 1
+    fi
 }
 
 main() {
