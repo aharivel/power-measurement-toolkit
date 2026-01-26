@@ -3,10 +3,12 @@
 # Setup Tuned Profiles for Power Measurement Tests
 #
 # This script creates tuned profiles for all test scenarios:
-# - Test 1: Idle with C6 state (nominal and min frequency)
+# - Test 1: Idle with deep C-state (nominal and min frequency)
 # - Test 2: Idle with C1 state (nominal and min frequency)
 # - Test 3: CPU stress test (nominal and min frequency)
 # - Test 4: DPDK workload (nominal and min frequency)
+#
+# Supports both Intel and AMD platforms with automatic detection.
 #
 # Usage: sudo ./setup_tuned_profiles.sh
 #
@@ -16,9 +18,39 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNED_BASE_DIR="/etc/tuned"
 
-# CPU frequency values (kHz)
-MIN_FREQ=800000
-NOMINAL_FREQ=2300000
+# Detect platform and set appropriate frequencies
+detect_platform() {
+    local vendor=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
+    local driver=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null || echo "unknown")
+
+    if [ "$vendor" = "AuthenticAMD" ]; then
+        PLATFORM="AMD"
+        # Try to get frequencies from amd-pstate if available
+        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq ]; then
+            # Use lowest non-linear freq as min (more efficient than absolute min)
+            MIN_FREQ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq 2>/dev/null || echo "1800000")
+        else
+            MIN_FREQ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "400000")
+        fi
+        # Get nominal frequency
+        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq ]; then
+            NOMINAL_FREQ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq 2>/dev/null || echo "2250000")
+        else
+            # Fallback: use scaling_max_freq as approximation
+            NOMINAL_FREQ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "2250000")
+        fi
+        echo "Detected AMD platform (driver: $driver)"
+    else
+        PLATFORM="Intel"
+        MIN_FREQ=800000
+        NOMINAL_FREQ=2300000
+        echo "Detected Intel platform (driver: $driver)"
+    fi
+
+    echo "  Nominal frequency: $((NOMINAL_FREQ / 1000)) MHz"
+    echo "  Minimum frequency: $((MIN_FREQ / 1000)) MHz"
+    echo ""
+}
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -27,115 +59,142 @@ check_root() {
     fi
 }
 
+# Ensure amd-pstate is in passive mode for frequency control
+setup_amd_pstate_passive() {
+    if [ "$PLATFORM" = "AMD" ]; then
+        local status_file="/sys/devices/system/cpu/amd_pstate/status"
+        if [ -f "$status_file" ]; then
+            local current_status=$(cat "$status_file")
+            if [ "$current_status" != "passive" ]; then
+                echo "Switching amd-pstate to passive mode for frequency control..."
+                echo passive > "$status_file" 2>/dev/null || {
+                    echo "WARNING: Could not switch to passive mode. Fixed frequencies may not work."
+                    echo "         Add 'amd_pstate=passive' to kernel boot parameters for best results."
+                }
+            fi
+        fi
+    fi
+}
+
 create_profile_test1_c6_nominal() {
     local profile_name="powertest-1-c6-nominal"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((NOMINAL_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 1: Idle with C6 state, Nominal frequency (2300 MHz)
+# Test 1: Idle with deep C-state, Nominal frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 1: Idle C6 @ 2300MHz
+summary=Power Test 1: Idle deep sleep @ ${freq_mhz}MHz
 
 [cpu]
 governor=userspace
 energy_perf_bias=powersave
-# Do NOT set force_latency or include latency-performance - they block C6!
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Ensure amd-pstate is in passive mode for frequency control
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
+
+    # Set frequency to nominal (${NOMINAL_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        # Set min/max first to remove restrictions
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Enable all C-states (including C6)
+    # Enable all C-states (deep sleep)
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
 }
 
 stop() {
+    # Re-enable turbo/boost
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
-    echo "  ✓ Created $profile_name"
+    echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
 create_profile_test1_c6_min() {
     local profile_name="powertest-1-c6-min"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((MIN_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 1: Idle with C6 state, Minimum frequency (800 MHz)
+# Test 1: Idle with deep C-state, Minimum frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 1: Idle C6 @ 800MHz
+summary=Power Test 1: Idle deep sleep @ ${freq_mhz}MHz
+
 [cpu]
 governor=userspace
 energy_perf_bias=powersave
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
 
-    # Set frequency to minimum (800 MHz)
+    # Ensure amd-pstate is in passive mode for frequency control
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
+
+    # Set frequency to minimum (${MIN_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        # Set min/max first to remove restrictions
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Enable all C-states (including C6)
+    # Enable all C-states (deep sleep)
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
@@ -143,10 +202,11 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
@@ -156,52 +216,59 @@ EOF
 create_profile_test2_c1_nominal() {
     local profile_name="powertest-2-c1-nominal"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((NOMINAL_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 2: Idle with C1 state, Nominal frequency (2300 MHz)
+# Test 2: Idle with C1 state only, Nominal frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 2: Idle C1 @ 2300MHz
+summary=Power Test 2: Idle C1 @ ${freq_mhz}MHz
+
 [cpu]
 governor=userspace
 energy_perf_bias=performance
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Ensure amd-pstate is in passive mode for frequency control
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
+
+    # Set frequency to nominal (${NOMINAL_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        # Set min/max first to remove restrictions
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Disable C1E and C6, keep only C1
+    # Disable deeper C-states, keep only POLL and C1
     for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu/cpuidle" ] || continue
-        # Enable POLL and C1
-        [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
-        [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
-        # Disable C1E and C6
-        [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
-        [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -d "\$cpu/cpuidle" ] || continue
+        # Enable POLL (state0) and C1 (state1)
+        [ -f "\$cpu/cpuidle/state0/disable" ] && echo 0 > "\$cpu/cpuidle/state0/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state1/disable" ] && echo 0 > "\$cpu/cpuidle/state1/disable" 2>/dev/null || true
+        # Disable state2+ (C2/C1E/C6 depending on platform)
+        [ -f "\$cpu/cpuidle/state2/disable" ] && echo 1 > "\$cpu/cpuidle/state2/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state3/disable" ] && echo 1 > "\$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state4/disable" ] && echo 1 > "\$cpu/cpuidle/state4/disable" 2>/dev/null || true
     done
 
     return 0
@@ -209,10 +276,11 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     # Re-enable all C-states
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
     return 0
 }
@@ -227,52 +295,57 @@ EOF
 create_profile_test2_c1_min() {
     local profile_name="powertest-2-c1-min"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((MIN_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 2: Idle with C1 state, Minimum frequency (800 MHz)
+# Test 2: Idle with C1 state only, Minimum frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 2: Idle C1 @ 800MHz
+summary=Power Test 2: Idle C1 @ ${freq_mhz}MHz
+
 [cpu]
 governor=userspace
 energy_perf_bias=performance
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
 
-    # Set frequency to minimum (800 MHz)
+    # Ensure amd-pstate is in passive mode for frequency control
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
+
+    # Set frequency to minimum (${MIN_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        # Set min/max first to remove restrictions
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Disable C1E and C6, keep only C1
+    # Disable deeper C-states, keep only POLL and C1
     for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu/cpuidle" ] || continue
-        [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
-        [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
-        [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
-        [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -d "\$cpu/cpuidle" ] || continue
+        [ -f "\$cpu/cpuidle/state0/disable" ] && echo 0 > "\$cpu/cpuidle/state0/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state1/disable" ] && echo 0 > "\$cpu/cpuidle/state1/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state2/disable" ] && echo 1 > "\$cpu/cpuidle/state2/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state3/disable" ] && echo 1 > "\$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -f "\$cpu/cpuidle/state4/disable" ] && echo 1 > "\$cpu/cpuidle/state4/disable" 2>/dev/null || true
     done
 
     return 0
@@ -280,9 +353,10 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
     return 0
 }
@@ -297,46 +371,51 @@ EOF
 create_profile_test3_stress_nominal() {
     local profile_name="powertest-3-stress-nominal"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((NOMINAL_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 3: CPU Stress test, Nominal frequency (2300 MHz)
+# Test 3: CPU Stress test, Nominal frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 3: Stress @ 2300MHz
+summary=Power Test 3: Stress @ ${freq_mhz}MHz
+
 [cpu]
 governor=userspace
 energy_perf_bias=performance
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (${NOMINAL_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
@@ -344,59 +423,65 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
-    echo "  ✓ Created $profile_name"
+    echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
 create_profile_test3_stress_min() {
     local profile_name="powertest-3-stress-min"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((MIN_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 3: CPU Stress test, Minimum frequency (800 MHz)
+# Test 3: CPU Stress test, Minimum frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 #
 
 [main]
-summary=Power Test 3: Stress @ 800MHz
+summary=Power Test 3: Stress @ ${freq_mhz}MHz
+
 [cpu]
 governor=userspace
 energy_perf_bias=performance
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
 
-    # Set frequency to minimum (800 MHz)
+    # Set frequency to minimum (${MIN_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
@@ -404,31 +489,34 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
-    echo "  ✓ Created $profile_name"
+    echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
 create_profile_test4_dpdk_nominal() {
     local profile_name="powertest-4-dpdk-nominal"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((NOMINAL_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 4: DPDK workload, Nominal frequency (2300 MHz)
+# Test 4: DPDK workload, Nominal frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 # With CPU isolation
 #
 
 [main]
-summary=Power Test 4: DPDK @ 2300MHz
+summary=Power Test 4: DPDK @ ${freq_mhz}MHz
 include=cpu-partitioning
 
 [cpu]
@@ -441,34 +529,36 @@ energy_perf_bias=performance
 isolated_cores=4-19
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 
 [bootloader]
 # Requires reboot to take effect
 cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (${NOMINAL_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${NOMINAL_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
@@ -476,31 +566,34 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
-    echo "  ✓ Created $profile_name"
+    echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
 create_profile_test4_dpdk_min() {
     local profile_name="powertest-4-dpdk-min"
     local profile_dir="$TUNED_BASE_DIR/$profile_name"
+    local freq_mhz=$((MIN_FREQ / 1000))
 
     echo "Creating profile: $profile_name"
     mkdir -p "$profile_dir"
 
-    cat > "$profile_dir/tuned.conf" <<'EOF'
+    cat > "$profile_dir/tuned.conf" <<EOF
 #
-# Test 4: DPDK workload, Minimum frequency (800 MHz)
+# Test 4: DPDK workload, Minimum frequency (${freq_mhz} MHz)
+# Platform: $PLATFORM
 # With CPU isolation
 #
 
 [main]
-summary=Power Test 4: DPDK @ 800MHz
+summary=Power Test 4: DPDK @ ${freq_mhz}MHz
 include=cpu-partitioning
 
 [cpu]
@@ -511,33 +604,35 @@ energy_perf_bias=performance
 isolated_cores=4-19
 
 [script]
-script=${i:PROFILE_DIR}/script.sh
+script=\${i:PROFILE_DIR}/script.sh
 
 [bootloader]
 cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
 EOF
 
-    cat > "$profile_dir/script.sh" <<'EOF'
+    cat > "$profile_dir/script.sh" <<EOF
 #!/bin/bash
 . /usr/lib/tuned/functions
 
 start() {
-    # Disable turbo
+    # Disable turbo/boost
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || true
 
-    # Set frequency to minimum (800 MHz)
+    # Set frequency to minimum (${MIN_FREQ} kHz = ${freq_mhz} MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        [ -d "$cpu_dir/cpufreq" ] || continue
-        echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        [ -d "\$cpu_dir/cpufreq" ] || continue
+        echo userspace > "\$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo ${MIN_FREQ} > "\$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
     for state_dir in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
-        [ -d "$state_dir" ] || continue
-        echo 0 > "$state_dir/disable" 2>/dev/null || true
+        [ -d "\$state_dir" ] || continue
+        echo 0 > "\$state_dir/disable" 2>/dev/null || true
     done
 
     return 0
@@ -545,14 +640,15 @@ start() {
 
 stop() {
     echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
     return 0
 }
 
-process $@
+process \$@
 EOF
 
     chmod +x "$profile_dir/script.sh"
-    echo "  ✓ Created $profile_name"
+    echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
 main() {
@@ -562,6 +658,12 @@ main() {
     echo ""
 
     check_root
+
+    # Detect platform and set frequencies
+    detect_platform
+
+    # Setup AMD P-state passive mode if needed
+    setup_amd_pstate_passive
 
     # Check if tuned is installed
     if ! command -v tuned-adm &>/dev/null; then
@@ -573,7 +675,7 @@ main() {
     echo "Creating 8 tuned profiles for power measurement tests..."
     echo ""
 
-    # Test 1: Idle C6
+    # Test 1: Idle deep C-state
     create_profile_test1_c6_nominal
     create_profile_test1_c6_min
 
@@ -589,27 +691,31 @@ main() {
     create_profile_test4_dpdk_nominal
     create_profile_test4_dpdk_min
 
+    local nominal_mhz=$((NOMINAL_FREQ / 1000))
+    local min_mhz=$((MIN_FREQ / 1000))
+
     echo ""
     echo "========================================="
     echo "✓ All profiles created successfully!"
     echo "========================================="
     echo ""
+    echo "Platform: $PLATFORM"
     echo "Available profiles:"
-    echo "  Test 1 (Idle C6):"
-    echo "    - powertest-1-c6-nominal  (2300 MHz)"
-    echo "    - powertest-1-c6-min      (800 MHz)"
+    echo "  Test 1 (Idle deep sleep):"
+    echo "    - powertest-1-c6-nominal  (${nominal_mhz} MHz)"
+    echo "    - powertest-1-c6-min      (${min_mhz} MHz)"
     echo ""
     echo "  Test 2 (Idle C1):"
-    echo "    - powertest-2-c1-nominal  (2300 MHz)"
-    echo "    - powertest-2-c1-min      (800 MHz)"
+    echo "    - powertest-2-c1-nominal  (${nominal_mhz} MHz)"
+    echo "    - powertest-2-c1-min      (${min_mhz} MHz)"
     echo ""
     echo "  Test 3 (Stress):"
-    echo "    - powertest-3-stress-nominal  (2300 MHz)"
-    echo "    - powertest-3-stress-min      (800 MHz)"
+    echo "    - powertest-3-stress-nominal  (${nominal_mhz} MHz)"
+    echo "    - powertest-3-stress-min      (${min_mhz} MHz)"
     echo ""
     echo "  Test 4 (DPDK):"
-    echo "    - powertest-4-dpdk-nominal  (2300 MHz)"
-    echo "    - powertest-4-dpdk-min      (800 MHz)"
+    echo "    - powertest-4-dpdk-nominal  (${nominal_mhz} MHz)"
+    echo "    - powertest-4-dpdk-min      (${min_mhz} MHz)"
     echo ""
     echo "Usage:"
     echo "  tuned-adm profile powertest-1-c6-nominal"
