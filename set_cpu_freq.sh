@@ -3,6 +3,8 @@
 # CPU Frequency Configuration Script
 # Sets all CPUs to either nominal (max) or minimum frequency
 #
+# Supports both Intel and AMD platforms with automatic detection.
+#
 # Usage: sudo ./set_cpu_freq.sh [nominal|min]
 #
 
@@ -10,35 +12,65 @@ set -euo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 
-# CPU frequency values (in kHz) - from system_info
-# Intel Xeon Silver 4316 @ 2.30GHz
-MIN_FREQ_KHZ=800000      # Minimum frequency
-NOMINAL_FREQ_KHZ=2300000 # Base/Nominal frequency (@ 2.30GHz)
-MAX_FREQ_KHZ=3400000     # Maximum turbo frequency
+# Detect platform and set appropriate frequencies
+detect_platform() {
+    local vendor=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
+    DRIVER=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null || echo "unknown")
+
+    if [ "$vendor" = "AuthenticAMD" ]; then
+        PLATFORM="AMD"
+        # Read frequencies from amd-pstate if available
+        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq ]; then
+            # Use lowest non-linear freq as min (more power-efficient than absolute min)
+            MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq 2>/dev/null || echo "1800000")
+        else
+            MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "400000")
+        fi
+        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq ]; then
+            NOMINAL_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq 2>/dev/null || echo "2250000")
+        else
+            NOMINAL_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "2250000")
+        fi
+        MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3100000")
+    else
+        PLATFORM="Intel"
+        MIN_FREQ_KHZ=800000
+        NOMINAL_FREQ_KHZ=2300000
+        MAX_FREQ_KHZ=3400000
+    fi
+}
+
+# Run detection immediately
+detect_platform
 
 usage() {
+    local min_mhz=$((MIN_FREQ_KHZ / 1000))
+    local nominal_mhz=$((NOMINAL_FREQ_KHZ / 1000))
+
     cat <<EOF
 Usage: sudo $SCRIPT_NAME [nominal|min]
 
 Sets CPU frequency for all CPUs.
 
+Platform: $PLATFORM (driver: $DRIVER)
+
 Arguments:
-    nominal     Set CPUs to nominal (base) frequency: ${NOMINAL_FREQ_KHZ} kHz (2300 MHz)
-    min         Set CPUs to minimum frequency: ${MIN_FREQ_KHZ} kHz (800 MHz)
+    nominal     Set CPUs to nominal (base) frequency: ${NOMINAL_FREQ_KHZ} kHz (${nominal_mhz} MHz)
+    min         Set CPUs to minimum frequency: ${MIN_FREQ_KHZ} kHz (${min_mhz} MHz)
 
 Requirements:
     - Must run as root (sudo)
-    - Intel P-state driver or cpufreq interface available
+    - Intel P-state, AMD P-state, or acpi-cpufreq driver
 
 Examples:
-    sudo $SCRIPT_NAME nominal    # Set to 2300 MHz (base frequency)
-    sudo $SCRIPT_NAME min        # Set to 800 MHz
+    sudo $SCRIPT_NAME nominal    # Set to ${nominal_mhz} MHz (base frequency)
+    sudo $SCRIPT_NAME min        # Set to ${min_mhz} MHz
 
 Notes:
     - This script sets the same frequency for all CPUs
     - Uses the 'userspace' governor to pin frequency
-    - Disables turbo boost for consistent measurements
-    - Nominal = Base frequency (2300 MHz), NOT turbo/max (3400 MHz)
+    - Disables turbo/boost for consistent measurements
+    - For AMD, switches amd-pstate to passive mode for frequency control
     - Changes persist until reboot or manual change
 EOF
     exit 1
@@ -52,13 +84,36 @@ check_root() {
 }
 
 disable_turbo() {
-    echo "Disabling Intel Turbo Boost..."
+    echo "Disabling turbo/boost..."
 
-    if [ -f /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
-        echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
-        echo "  ✓ Turbo disabled via intel_pstate"
+    if [ "$PLATFORM" = "AMD" ]; then
+        # AMD: use cpufreq boost interface
+        if [ -f /sys/devices/system/cpu/cpufreq/boost ]; then
+            echo 0 > /sys/devices/system/cpu/cpufreq/boost
+            echo "  ✓ Boost disabled via cpufreq/boost"
+        else
+            echo "  ! cpufreq/boost not found"
+        fi
+
+        # Switch amd-pstate to passive mode for frequency control
+        if [ -f /sys/devices/system/cpu/amd_pstate/status ]; then
+            local current=$(cat /sys/devices/system/cpu/amd_pstate/status)
+            if [ "$current" != "passive" ]; then
+                echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null && \
+                    echo "  ✓ Switched amd-pstate to passive mode" || \
+                    echo "  ! Could not switch to passive mode (add amd_pstate=passive to kernel cmdline)"
+            else
+                echo "  ✓ amd-pstate already in passive mode"
+            fi
+        fi
     else
-        echo "  ! intel_pstate/no_turbo not found (may not be critical)"
+        # Intel: use intel_pstate no_turbo
+        if [ -f /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
+            echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
+            echo "  ✓ Turbo disabled via intel_pstate"
+        else
+            echo "  ! intel_pstate/no_turbo not found (may not be critical)"
+        fi
     fi
 }
 
@@ -67,6 +122,7 @@ set_frequency() {
     local mode_name=$2
     local freq_mhz=$((target_freq / 1000))
 
+    echo "Platform: $PLATFORM (driver: $DRIVER)"
     echo "Setting all CPUs to ${mode_name} frequency: ${target_freq} kHz (${freq_mhz} MHz)"
     echo ""
 
@@ -118,15 +174,28 @@ verify_frequency() {
     # Wait a moment for frequencies to settle
     sleep 1
 
-    # Sample a few CPUs
-    for cpu_num in 0 1 10 20 30; do
+    # Get total CPU count for sampling
+    local cpu_count=$(nproc)
+
+    # Sample CPUs evenly distributed across the system
+    # For large systems (512 CPUs), sample: 0, 1, ~25%, ~50%, ~75%, last
+    local sample_cpus="0 1"
+    if [ "$cpu_count" -gt 10 ]; then
+        sample_cpus="$sample_cpus $((cpu_count / 4)) $((cpu_count / 2)) $((cpu_count * 3 / 4)) $((cpu_count - 1))"
+    fi
+
+    for cpu_num in $sample_cpus; do
         cpufreq_dir="/sys/devices/system/cpu/cpu${cpu_num}/cpufreq"
 
         if [ -d "$cpufreq_dir" ]; then
             governor=$(cat "$cpufreq_dir/scaling_governor" 2>/dev/null || echo "N/A")
             cur_freq=$(cat "$cpufreq_dir/scaling_cur_freq" 2>/dev/null || echo "N/A")
-
-            echo "  CPU$cpu_num: governor=$governor, current_freq=$cur_freq kHz"
+            if [ "$cur_freq" != "N/A" ]; then
+                cur_mhz=$((cur_freq / 1000))
+                printf "  CPU %-3d: governor=%-10s freq=%d kHz (%d MHz)\n" "$cpu_num" "$governor" "$cur_freq" "$cur_mhz"
+            else
+                printf "  CPU %-3d: governor=%-10s freq=N/A\n" "$cpu_num" "$governor"
+            fi
         fi
     done
 
@@ -143,18 +212,21 @@ main() {
 
     mode=$1
 
+    local nominal_mhz=$((NOMINAL_FREQ_KHZ / 1000))
+    local min_mhz=$((MIN_FREQ_KHZ / 1000))
+
     case "$mode" in
         nominal|base)
             set_frequency "$NOMINAL_FREQ_KHZ" "nominal/base"
             verify_frequency
             echo ""
-            echo "✓ All CPUs set to NOMINAL frequency (2300 MHz)"
+            echo "✓ All CPUs set to NOMINAL frequency (${nominal_mhz} MHz)"
             ;;
         min|minimum)
             set_frequency "$MIN_FREQ_KHZ" "minimum"
             verify_frequency
             echo ""
-            echo "✓ All CPUs set to MINIMUM frequency (800 MHz)"
+            echo "✓ All CPUs set to MINIMUM frequency (${min_mhz} MHz)"
             ;;
         *)
             echo "ERROR: Invalid mode '$mode'" >&2
