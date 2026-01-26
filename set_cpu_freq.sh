@@ -19,19 +19,33 @@ detect_platform() {
 
     if [ "$vendor" = "AuthenticAMD" ]; then
         PLATFORM="AMD"
-        # Read frequencies from amd-pstate if available
-        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq ]; then
-            # Use lowest non-linear freq as min (more power-efficient than absolute min)
+
+        if [ "$DRIVER" = "acpi-cpufreq" ]; then
+            # acpi-cpufreq uses discrete P-states
+            # Get available frequencies and pick highest (nominal) and lowest (min)
+            local avail_freqs=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies 2>/dev/null)
+            if [ -n "$avail_freqs" ]; then
+                # Frequencies are listed highest to lowest: "2250000 1800000 1500000"
+                NOMINAL_FREQ_KHZ=$(echo "$avail_freqs" | awk '{print $1}')
+                MIN_FREQ_KHZ=$(echo "$avail_freqs" | awk '{print $NF}')
+                MAX_FREQ_KHZ=$NOMINAL_FREQ_KHZ
+            else
+                # Fallback to cpuinfo limits
+                NOMINAL_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "2250000")
+                MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "1500000")
+                MAX_FREQ_KHZ=$NOMINAL_FREQ_KHZ
+            fi
+        elif [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq ]; then
+            # amd-pstate driver
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_lowest_nonlinear_freq 2>/dev/null || echo "1800000")
-        else
-            MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "400000")
-        fi
-        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq ]; then
             NOMINAL_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/amd_pstate_nominal_freq 2>/dev/null || echo "2250000")
+            MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3100000")
         else
+            # Generic fallback
+            MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "1500000")
             NOMINAL_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "2250000")
+            MAX_FREQ_KHZ=$NOMINAL_FREQ_KHZ
         fi
-        MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3100000")
     else
         PLATFORM="Intel"
         MIN_FREQ_KHZ=800000
@@ -87,7 +101,7 @@ disable_turbo() {
     echo "Disabling turbo/boost..."
 
     if [ "$PLATFORM" = "AMD" ]; then
-        # AMD: use cpufreq boost interface
+        # AMD: use cpufreq boost interface (works for both acpi-cpufreq and amd-pstate)
         if [ -f /sys/devices/system/cpu/cpufreq/boost ]; then
             echo 0 > /sys/devices/system/cpu/cpufreq/boost
             echo "  ✓ Boost disabled via cpufreq/boost"
@@ -95,15 +109,17 @@ disable_turbo() {
             echo "  ! cpufreq/boost not found"
         fi
 
-        # Switch amd-pstate to passive mode for frequency control
-        if [ -f /sys/devices/system/cpu/amd_pstate/status ]; then
-            local current=$(cat /sys/devices/system/cpu/amd_pstate/status)
-            if [ "$current" != "passive" ]; then
-                echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null && \
-                    echo "  ✓ Switched amd-pstate to passive mode" || \
-                    echo "  ! Could not switch to passive mode (add amd_pstate=passive to kernel cmdline)"
-            else
-                echo "  ✓ amd-pstate already in passive mode"
+        # Switch amd-pstate to passive mode if using amd-pstate driver
+        if [ "$DRIVER" = "amd-pstate" ] || [ "$DRIVER" = "amd-pstate-epp" ]; then
+            if [ -f /sys/devices/system/cpu/amd_pstate/status ]; then
+                local current=$(cat /sys/devices/system/cpu/amd_pstate/status)
+                if [ "$current" != "passive" ]; then
+                    echo passive > /sys/devices/system/cpu/amd_pstate/status 2>/dev/null && \
+                        echo "  ✓ Switched amd-pstate to passive mode" || \
+                        echo "  ! Could not switch to passive mode (add amd_pstate=passive to kernel cmdline)"
+                else
+                    echo "  ✓ amd-pstate already in passive mode"
+                fi
             fi
         fi
     else
