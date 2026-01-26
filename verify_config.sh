@@ -155,12 +155,22 @@ check_cstate_config() {
         echo "    Disabled: ${disabled_states[*]}"
     fi
 
-    # Provide test guidance
+    # Provide test guidance based on enabled states
     echo ""
-    if [[ " ${enabled_states[@]} " =~ " C6 " ]]; then
-        echo "  → Configuration suitable for Test 1 (C6 deep sleep)"
-    elif [[ ! " ${enabled_states[@]} " =~ " C6 " ]] && [[ " ${enabled_states[@]} " =~ " C1 " ]]; then
-        echo "  → Configuration suitable for Test 2 (C1 shallow sleep)"
+    # Check if deepest state (state2+) is enabled - suitable for Test 1
+    # On Intel: C6 (state3), on AMD: C2 (state2)
+    local deepest_enabled=false
+    for state in "${enabled_states[@]}"; do
+        if [[ "$state" == "C2" || "$state" == "C6" || "$state" == "C1E" ]]; then
+            deepest_enabled=true
+            break
+        fi
+    done
+
+    if [ "$deepest_enabled" = true ]; then
+        echo "  → Configuration suitable for Test 1 (deep sleep enabled)"
+    elif [[ " ${enabled_states[@]} " =~ " C1 " ]]; then
+        echo "  → Configuration suitable for Test 2 (C1 shallow sleep only)"
     fi
 }
 
@@ -246,13 +256,19 @@ generate_summary() {
         fi
     fi
 
-    # Check C-states
-    if [ -f /sys/devices/system/cpu/cpu0/cpuidle/state3/disable ]; then
-        c6_disabled=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state3/disable)
-        if [ "$c6_disabled" = "0" ]; then
-            echo "  ✓ C6 enabled (suitable for Test 1)"
+    # Check C-states - find deepest available state
+    local deepest_state_dir=""
+    local deepest_state_name=""
+    for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
+        [ -d "$state_dir" ] && deepest_state_dir="$state_dir"
+    done
+    if [ -n "$deepest_state_dir" ] && [ -f "$deepest_state_dir/disable" ]; then
+        deepest_state_name=$(cat "$deepest_state_dir/name" 2>/dev/null || basename "$deepest_state_dir")
+        deep_disabled=$(cat "$deepest_state_dir/disable")
+        if [ "$deep_disabled" = "0" ]; then
+            echo "  ✓ Deep sleep ($deepest_state_name) enabled (suitable for Test 1)"
         else
-            echo "  ✓ C6 disabled (suitable for Test 2)"
+            echo "  ✓ Deep sleep ($deepest_state_name) disabled (suitable for Test 2)"
         fi
     fi
 

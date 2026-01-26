@@ -63,17 +63,28 @@ echo ""
 
 # Quick check: are any CPUs in deep sleep?
 echo "Quick Analysis:"
-c6_time=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state3/time 2>/dev/null || echo "0")
+
+# Find deepest available state dynamically
+deepest_state_dir=""
+deepest_state_name=""
+for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
+    [ -d "$state_dir" ] && deepest_state_dir="$state_dir"
+done
+if [ -n "$deepest_state_dir" ]; then
+    deepest_state_name=$(cat "$deepest_state_dir/name" 2>/dev/null || basename "$deepest_state_dir")
+fi
+
+deep_time=$(cat "$deepest_state_dir/time" 2>/dev/null || echo "0")
 c1_time=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state1/time 2>/dev/null || echo "0")
 
-c6_sec=$((c6_time / 1000000))
+deep_sec=$((deep_time / 1000000))
 c1_sec=$((c1_time / 1000000))
 
-echo "  C1 time:  ${c1_sec}s"
-echo "  C6 time:  ${c6_sec}s"
+echo "  C1 time:       ${c1_sec}s"
+echo "  $deepest_state_name time:       ${deep_sec}s"
 
-if [ $c6_time -gt $c1_time ]; then
-    echo "  → CPU 0 is spending more time in C6 (deep sleep) ✓"
+if [ $deep_time -gt $c1_time ]; then
+    echo "  → CPU 0 is spending more time in $deepest_state_name (deep sleep) ✓"
 elif [ $c1_time -gt 0 ]; then
     echo "  → CPU 0 is spending more time in C1 (shallow sleep)"
 else

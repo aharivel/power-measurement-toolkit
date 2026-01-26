@@ -146,11 +146,14 @@ show_summary() {
         fi
     done
 
-    # Print summary
-    for state in POLL C1 C1E C6; do
-        count=${state_counts["$state"]:-0}
-        if [ $count -gt 0 ]; then
-            printf "  %-6s: %2d CPUs\n" "$state" "$count"
+    # Print summary - get state names dynamically from CPU 0
+    for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
+        if [ -d "$state_dir" ]; then
+            state=$(cat "$state_dir/name" 2>/dev/null || basename "$state_dir")
+            count=${state_counts["$state"]:-0}
+            if [ $count -gt 0 ]; then
+                printf "  %-6s: %2d CPUs\n" "$state" "$count"
+            fi
         fi
     done
     echo ""

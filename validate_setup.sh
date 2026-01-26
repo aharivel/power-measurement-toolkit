@@ -85,21 +85,28 @@ echo ""
 # Check 4: C-states
 echo "4. C-State Availability"
 if [ -d /sys/devices/system/cpu/cpu0/cpuidle ]; then
-    c6_found=false
+    # Count available states and find deepest
+    state_count=0
+    deepest_state=""
+    deepest_latency=0
     for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
         if [ -f "$state_dir/name" ]; then
             name=$(cat "$state_dir/name")
-            if [ "$name" = "C6" ]; then
-                c6_found=true
-                break
+            latency=$(cat "$state_dir/latency" 2>/dev/null || echo "0")
+            ((state_count++))
+            if [ "$latency" -gt "$deepest_latency" ]; then
+                deepest_latency=$latency
+                deepest_state=$name
             fi
         fi
     done
 
-    if [ "$c6_found" = true ]; then
-        print_check "ok" "C6 state available"
+    if [ "$state_count" -ge 3 ]; then
+        print_check "ok" "Deep C-state available: $deepest_state (${deepest_latency}us latency)"
+    elif [ "$state_count" -ge 2 ]; then
+        print_check "warn" "Only $state_count C-states found (deepest: $deepest_state). Check BIOS for deeper states."
     else
-        print_check "warn" "C6 state not found (check BIOS C-States setting)"
+        print_check "warn" "Only $state_count C-state found. Check BIOS C-States setting."
     fi
 else
     print_check "error" "cpuidle interface not found"
