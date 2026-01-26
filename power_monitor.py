@@ -30,19 +30,70 @@ class PowerMonitor:
 
         # RAPL paths
         self.rapl_base = Path("/sys/class/powercap/intel-rapl")
-        self.rapl_package = self.rapl_base / "intel-rapl:0"
-        self.rapl_energy_file = self.rapl_package / "energy_uj"
 
-        # Previous RAPL reading for delta calculation
-        self.prev_rapl_energy = None
+        # Discover RAPL domains dynamically
+        self.rapl_domains = self._discover_rapl_domains()
+
+        # Previous RAPL readings for delta calculation (keyed by domain name)
+        self.prev_rapl_energy = {}
         self.prev_rapl_time = None
 
         # Validate interfaces
         self._check_interfaces()
 
+    def _discover_rapl_domains(self):
+        """
+        Discover available RAPL domains dynamically.
+        Returns dict of {domain_name: energy_file_path}
+
+        Typical domains:
+        - intel-rapl:0 (package-0)
+        - intel-rapl:0:0 (core on package-0)
+        - intel-rapl:1 (package-1)
+        - intel-rapl:1:0 (core on package-1)
+        """
+        domains = {}
+
+        if not self.rapl_base.exists():
+            return domains
+
+        # Find all package domains (intel-rapl:X)
+        for pkg_dir in sorted(self.rapl_base.glob("intel-rapl:*")):
+            if pkg_dir.is_dir():
+                energy_file = pkg_dir / "energy_uj"
+                name_file = pkg_dir / "name"
+
+                if energy_file.exists():
+                    # Get domain name (e.g., "package-0")
+                    domain_name = pkg_dir.name
+                    if name_file.exists():
+                        friendly_name = name_file.read_text().strip()
+                        domain_name = f"{friendly_name}"
+
+                    domains[domain_name] = energy_file
+
+                    # Look for subdomains (intel-rapl:X:Y)
+                    for sub_dir in sorted(pkg_dir.glob("intel-rapl:*:*")):
+                        if sub_dir.is_dir():
+                            sub_energy_file = sub_dir / "energy_uj"
+                            sub_name_file = sub_dir / "name"
+
+                            if sub_energy_file.exists():
+                                # Get subdomain name (e.g., "core")
+                                sub_domain_name = sub_dir.name
+                                if sub_name_file.exists():
+                                    friendly_name = sub_name_file.read_text().strip()
+                                    # Include parent package in name
+                                    sub_domain_name = f"{domain_name}-{friendly_name}"
+
+                                domains[sub_domain_name] = sub_energy_file
+
+        return domains
+
     def _check_interfaces(self):
         """Check if IPMI and RAPL interfaces are available"""
         errors = []
+        warnings = []
 
         # Check ipmitool
         try:
@@ -57,16 +108,22 @@ class PowerMonitor:
             errors.append(f"Error checking ipmitool: {e}")
 
         # Check RAPL
-        if not self.rapl_energy_file.exists():
-            errors.append(f"RAPL interface not found at {self.rapl_energy_file}")
-
-        # Check permissions
-        if self.rapl_energy_file.exists():
+        if not self.rapl_domains:
+            errors.append(f"No RAPL domains found at {self.rapl_base}")
+        else:
+            # Check permissions on first domain
+            first_domain = list(self.rapl_domains.values())[0]
             try:
-                with open(self.rapl_energy_file, 'r') as f:
+                with open(first_domain, 'r') as f:
                     f.read()
             except PermissionError:
                 errors.append("Permission denied reading RAPL (try running with sudo)")
+
+            # Print discovered domains
+            if self.verbose:
+                print(f"Discovered {len(self.rapl_domains)} RAPL domains:")
+                for name, path in self.rapl_domains.items():
+                    print(f"  - {name}")
 
         if errors:
             print("ERROR: Interface validation failed:", file=sys.stderr)
@@ -118,52 +175,63 @@ class PowerMonitor:
 
     def read_rapl_energy(self):
         """
-        Read RAPL energy counter
-        Returns energy in microjoules, or None on error
+        Read RAPL energy counters for all domains
+        Returns dict of {domain_name: energy_uj}, or empty dict on error
         """
-        try:
-            with open(self.rapl_energy_file, 'r') as f:
-                energy_uj = int(f.read().strip())
-            return energy_uj
-        except Exception as e:
-            if self.verbose:
-                print(f"Warning: Error reading RAPL: {e}", file=sys.stderr)
-            return None
+        energies = {}
+        for domain_name, energy_file in self.rapl_domains.items():
+            try:
+                with open(energy_file, 'r') as f:
+                    energy_uj = int(f.read().strip())
+                energies[domain_name] = energy_uj
+            except Exception as e:
+                if self.verbose:
+                    print(f"Warning: Error reading RAPL {domain_name}: {e}", file=sys.stderr)
+        return energies
 
-    def calculate_rapl_power(self, energy_uj, timestamp):
+    def calculate_rapl_power(self, energies, timestamp):
         """
-        Calculate average power from RAPL energy delta
-        Returns power in Watts, or None if this is first reading
+        Calculate average power from RAPL energy delta for all domains
+        Returns dict of {domain_name: power_watts}, None values for first reading
         """
-        if self.prev_rapl_energy is None:
-            # First reading - just store it
-            self.prev_rapl_energy = energy_uj
+        powers = {}
+
+        if self.prev_rapl_time is None:
+            # First reading - just store values
+            self.prev_rapl_energy = energies.copy()
             self.prev_rapl_time = timestamp
-            return None
+            return {name: None for name in energies}
 
-        # Calculate delta
-        energy_delta_uj = energy_uj - self.prev_rapl_energy
         time_delta_s = timestamp - self.prev_rapl_time
-
-        # Handle counter rollover (energy counter is typically 32-bit)
-        # Max value around 4.3 billion microjoules = ~4300 joules
-        if energy_delta_uj < 0:
-            # Counter rolled over
-            max_counter = 2**32  # Approximate, actual may vary
-            energy_delta_uj += max_counter
-
-        # Store current values for next iteration
-        self.prev_rapl_energy = energy_uj
-        self.prev_rapl_time = timestamp
 
         # Avoid division by zero
         if time_delta_s <= 0:
-            return None
+            return {name: None for name in energies}
 
-        # Convert to Watts: (microjoules / time_s) / 1,000,000 = Watts
-        power_w = (energy_delta_uj / time_delta_s) / 1_000_000
+        for domain_name, energy_uj in energies.items():
+            prev_energy = self.prev_rapl_energy.get(domain_name)
 
-        return power_w
+            if prev_energy is None:
+                powers[domain_name] = None
+                continue
+
+            # Calculate delta
+            energy_delta_uj = energy_uj - prev_energy
+
+            # Handle counter rollover (energy counter is typically 32-bit)
+            if energy_delta_uj < 0:
+                max_counter = 2**32
+                energy_delta_uj += max_counter
+
+            # Convert to Watts: (microjoules / time_s) / 1,000,000 = Watts
+            power_w = (energy_delta_uj / time_delta_s) / 1_000_000
+            powers[domain_name] = power_w
+
+        # Store current values for next iteration
+        self.prev_rapl_energy = energies.copy()
+        self.prev_rapl_time = timestamp
+
+        return powers
 
     def take_measurement(self):
         """
@@ -176,28 +244,42 @@ class PowerMonitor:
         # Read IPMI
         ipmi_power = self.read_ipmi_power()
 
-        # Read RAPL
-        rapl_energy = self.read_rapl_energy()
-        rapl_power = None
-        if rapl_energy is not None:
-            rapl_power = self.calculate_rapl_power(rapl_energy, timestamp)
+        # Read RAPL (all domains)
+        rapl_energies = self.read_rapl_energy()
+        rapl_powers = self.calculate_rapl_power(rapl_energies, timestamp)
 
         measurement = {
             'timestamp': timestamp_str,
             'timestamp_unix': timestamp,
             'ipmi_watts': ipmi_power,
-            'rapl_pkg_watts': rapl_power,
-            'rapl_energy_uj': rapl_energy
         }
+
+        # Add each RAPL domain's power to measurement
+        for domain_name, power in rapl_powers.items():
+            # Sanitize domain name for CSV column (replace - with _)
+            col_name = f"rapl_{domain_name.replace('-', '_')}_watts"
+            measurement[col_name] = power
 
         return measurement
 
     def print_measurement(self, measurement):
         """Print measurement to console"""
         ipmi_str = f"{measurement['ipmi_watts']:.2f}W" if measurement['ipmi_watts'] is not None else "N/A"
-        rapl_str = f"{measurement['rapl_pkg_watts']:.2f}W" if measurement['rapl_pkg_watts'] is not None else "N/A"
 
-        print(f"[{measurement['timestamp']}] IPMI: {ipmi_str:>10} | RAPL Package: {rapl_str:>10}")
+        # Build RAPL string from all domains
+        rapl_parts = []
+        for key, value in measurement.items():
+            if key.startswith('rapl_') and key.endswith('_watts'):
+                # Extract domain name from key
+                domain = key.replace('rapl_', '').replace('_watts', '').replace('_', '-')
+                if value is not None:
+                    rapl_parts.append(f"{domain}:{value:.1f}W")
+                else:
+                    rapl_parts.append(f"{domain}:N/A")
+
+        rapl_str = " | ".join(rapl_parts) if rapl_parts else "N/A"
+
+        print(f"[{measurement['timestamp']}] IPMI: {ipmi_str:>8} | RAPL: {rapl_str}")
 
     def save_to_csv(self):
         """Save all measurements to CSV file"""
@@ -205,9 +287,14 @@ class PowerMonitor:
             return
 
         try:
+            # Get all field names from the first measurement
+            # (they should all have the same fields)
+            if self.measurements:
+                fieldnames = list(self.measurements[0].keys())
+            else:
+                fieldnames = ['timestamp', 'timestamp_unix', 'ipmi_watts']
+
             with open(self.output_file, 'w', newline='') as f:
-                fieldnames = ['timestamp', 'timestamp_unix', 'ipmi_watts',
-                             'rapl_pkg_watts', 'rapl_energy_uj']
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(self.measurements)
