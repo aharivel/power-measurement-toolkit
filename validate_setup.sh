@@ -29,18 +29,29 @@ echo "Power Measurement Setup Validation"
 echo "========================================="
 echo ""
 
-# Check 1: Intel P-state mode
-echo "1. Intel P-state Configuration"
-if [ -f /sys/devices/system/cpu/intel_pstate/status ]; then
-    status=$(cat /sys/devices/system/cpu/intel_pstate/status)
-    if [ "$status" = "passive" ]; then
-        print_check "ok" "Intel P-state in passive mode"
-    else
-        print_check "error" "Intel P-state in $status mode (MUST be passive!)"
-        echo "     Fix: echo passive | sudo tee /sys/devices/system/cpu/intel_pstate/status"
+# Check 1: CPU Frequency Driver
+echo "1. CPU Frequency Driver"
+if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver ]; then
+    driver=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver)
+    print_check "ok" "Driver: $driver"
+
+    # Check Intel P-state specific settings
+    if [ -f /sys/devices/system/cpu/intel_pstate/status ]; then
+        status=$(cat /sys/devices/system/cpu/intel_pstate/status)
+        if [ "$status" = "passive" ]; then
+            print_check "ok" "Intel P-state in passive mode"
+        else
+            print_check "warn" "Intel P-state in $status mode (passive recommended for fixed freq)"
+        fi
+    fi
+
+    # Check AMD P-state specific settings
+    if [ -d /sys/devices/system/cpu/amd_pstate ]; then
+        status=$(cat /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || echo "unknown")
+        print_check "ok" "AMD P-state status: $status"
     fi
 else
-    print_check "error" "Intel P-state interface not found"
+    print_check "error" "cpufreq interface not found"
 fi
 echo ""
 
@@ -64,19 +75,24 @@ echo "3. CPU Frequency Range"
 if [ -f /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq ]; then
     min_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq)
     max_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
+    min_mhz=$((min_freq / 1000))
+    max_mhz=$((max_freq / 1000))
 
-    if [ "$min_freq" = "800000" ]; then
-        print_check "ok" "Min frequency: 800 MHz"
+    # Min frequency varies by platform (Intel ~800MHz, AMD EPYC ~400MHz)
+    if [ "$min_freq" -le "1000000" ]; then
+        print_check "ok" "Min frequency: ${min_mhz} MHz"
     else
-        print_check "warn" "Min frequency: $((min_freq / 1000)) MHz (expected 800 MHz)"
+        print_check "warn" "Min frequency: ${min_mhz} MHz (expected < 1000 MHz)"
     fi
 
-    if [ "$max_freq" -ge "2300000" ]; then
-        print_check "ok" "Max frequency: $((max_freq / 1000)) MHz"
+    # Max frequency should be reasonable for server CPUs
+    if [ "$max_freq" -ge "2000000" ]; then
+        print_check "ok" "Max frequency: ${max_mhz} MHz"
     else
-        print_check "error" "Max frequency: $((max_freq / 1000)) MHz (expected >= 2300 MHz)"
-        echo "     Check BIOS settings: Turbo Boost, C-States, CPU Power Management"
+        print_check "warn" "Max frequency: ${max_mhz} MHz (expected >= 2000 MHz)"
     fi
+
+    print_check "ok" "Frequency range: ${min_mhz} - ${max_mhz} MHz"
 else
     print_check "error" "Cannot read frequency information"
 fi
