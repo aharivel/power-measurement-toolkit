@@ -52,6 +52,26 @@ detect_platform() {
     echo ""
 }
 
+# Detect CPU count and calculate isolated cores
+# Keep CPUs 0-1 for kernel housekeeping, isolate all others
+detect_cpus() {
+    local num_cpus=$(nproc)
+    HOUSEKEEPING_CPUS="0-1"
+
+    if [ "$num_cpus" -le 2 ]; then
+        echo "WARNING: Only $num_cpus CPUs detected, cannot isolate any cores"
+        ISOLATED_CPUS=""
+    else
+        local last_cpu=$((num_cpus - 1))
+        ISOLATED_CPUS="2-${last_cpu}"
+    fi
+
+    echo "  Total CPUs: $num_cpus"
+    echo "  Housekeeping: $HOUSEKEEPING_CPUS"
+    echo "  Isolated: ${ISOLATED_CPUS:-none}"
+    echo ""
+}
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "ERROR: Must run as root (use sudo)" >&2
@@ -512,7 +532,7 @@ create_profile_test4_dpdk_nominal() {
 #
 # Test 4: DPDK workload, Nominal frequency (${freq_mhz} MHz)
 # Platform: $PLATFORM
-# With CPU isolation
+# With CPU isolation (housekeeping: ${HOUSEKEEPING_CPUS}, isolated: ${ISOLATED_CPUS})
 #
 
 [main]
@@ -524,16 +544,15 @@ governor=userspace
 energy_perf_bias=performance
 
 [variables]
-# Isolate CPUs 4-19 (physical cores, thread 0) for DPDK
-# Keep 0-3 for housekeeping
-isolated_cores=4-19
+# Keep CPUs ${HOUSEKEEPING_CPUS} for housekeeping, isolate ${ISOLATED_CPUS} for DPDK
+isolated_cores=${ISOLATED_CPUS}
 
 [script]
 script=\${i:PROFILE_DIR}/script.sh
 
 [bootloader]
 # Requires reboot to take effect
-cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+cmdline_isolation=nohz_full=${ISOLATED_CPUS} isolcpus=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}
 EOF
 
     cat > "$profile_dir/script.sh" <<EOF
@@ -589,7 +608,7 @@ create_profile_test4_dpdk_min() {
 #
 # Test 4: DPDK workload, Minimum frequency (${freq_mhz} MHz)
 # Platform: $PLATFORM
-# With CPU isolation
+# With CPU isolation (housekeeping: ${HOUSEKEEPING_CPUS}, isolated: ${ISOLATED_CPUS})
 #
 
 [main]
@@ -601,13 +620,15 @@ governor=userspace
 energy_perf_bias=performance
 
 [variables]
-isolated_cores=4-19
+# Keep CPUs ${HOUSEKEEPING_CPUS} for housekeeping, isolate ${ISOLATED_CPUS} for DPDK
+isolated_cores=${ISOLATED_CPUS}
 
 [script]
 script=\${i:PROFILE_DIR}/script.sh
 
 [bootloader]
-cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+# Requires reboot to take effect
+cmdline_isolation=nohz_full=${ISOLATED_CPUS} isolcpus=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}
 EOF
 
     cat > "$profile_dir/script.sh" <<EOF
@@ -662,6 +683,9 @@ main() {
     # Detect platform and set frequencies
     detect_platform
 
+    # Detect CPU topology for isolation
+    detect_cpus
+
     # Setup AMD P-state passive mode if needed
     setup_amd_pstate_passive
 
@@ -713,15 +737,18 @@ main() {
     echo "    - powertest-3-stress-nominal  (${nominal_mhz} MHz)"
     echo "    - powertest-3-stress-min      (${min_mhz} MHz)"
     echo ""
-    echo "  Test 4 (DPDK):"
+    echo "  Test 4 (DPDK with CPU isolation):"
     echo "    - powertest-4-dpdk-nominal  (${nominal_mhz} MHz)"
     echo "    - powertest-4-dpdk-min      (${min_mhz} MHz)"
+    echo "    Housekeeping CPUs: ${HOUSEKEEPING_CPUS}"
+    echo "    Isolated CPUs: ${ISOLATED_CPUS}"
     echo ""
     echo "Usage:"
     echo "  tuned-adm profile powertest-1-c6-nominal"
     echo "  tuned-adm active"
     echo ""
     echo "Note: Test 4 profiles require reboot for CPU isolation to take effect"
+    echo "      Kernel params: isolcpus=${ISOLATED_CPUS} nohz_full=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}"
 }
 
 main "$@"
