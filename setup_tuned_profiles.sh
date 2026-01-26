@@ -53,22 +53,73 @@ detect_platform() {
 }
 
 # Detect CPU count and calculate isolated cores
-# Keep CPUs 0-1 for kernel housekeeping, isolate all others
+# Keep 2 physical cores (and their SMT siblings) for kernel housekeeping, isolate all others
+# On multi-socket systems, keeps cores from first socket only for NUMA locality
 detect_cpus() {
     local num_cpus=$(nproc)
-    HOUSEKEEPING_CPUS="0-1"
 
-    if [ "$num_cpus" -le 2 ]; then
-        echo "WARNING: Only $num_cpus CPUs detected, cannot isolate any cores"
-        ISOLATED_CPUS=""
+    echo "  Total logical CPUs: $num_cpus"
+
+    # Get housekeeping CPUs: physical cores 0 and 1 plus their SMT siblings
+    # Use thread_siblings_list which shows all CPUs sharing the same physical core
+    local housekeeping_list=""
+
+    # Get siblings of CPU 0 (physical core 0)
+    if [ -f /sys/devices/system/cpu/cpu0/topology/thread_siblings_list ]; then
+        local siblings0=$(cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list)
+        housekeeping_list="$siblings0"
     else
-        local last_cpu=$((num_cpus - 1))
-        ISOLATED_CPUS="2-${last_cpu}"
+        housekeeping_list="0"
     fi
 
-    echo "  Total CPUs: $num_cpus"
-    echo "  Housekeeping: $HOUSEKEEPING_CPUS"
-    echo "  Isolated: ${ISOLATED_CPUS:-none}"
+    # Get siblings of CPU 1 (physical core 1)
+    if [ -f /sys/devices/system/cpu/cpu1/topology/thread_siblings_list ]; then
+        local siblings1=$(cat /sys/devices/system/cpu/cpu1/topology/thread_siblings_list)
+        housekeeping_list="$housekeeping_list,$siblings1"
+    else
+        housekeeping_list="$housekeeping_list,1"
+    fi
+
+    # Parse housekeeping list into a set for easy lookup
+    # Expand any ranges (e.g., "0-1" -> "0,1")
+    local housekeeping_expanded=$(echo "$housekeeping_list" | tr ',' '\n' | while read range; do
+        if [[ "$range" == *-* ]]; then
+            local start=${range%-*}
+            local end=${range#*-}
+            seq $start $end
+        else
+            echo "$range"
+        fi
+    done | sort -n | uniq)
+
+    # Build isolated list as complement
+    local isolated_list=""
+    for cpu in $(seq 0 $((num_cpus - 1))); do
+        if ! echo "$housekeeping_expanded" | grep -qx "$cpu"; then
+            if [ -z "$isolated_list" ]; then
+                isolated_list="$cpu"
+            else
+                isolated_list="$isolated_list,$cpu"
+            fi
+        fi
+    done
+
+    # Compact lists into ranges for kernel parameters
+    compact_cpu_list() {
+        echo "$1" | tr ',' '\n' | sort -n | \
+            awk 'NR==1{first=last=$1;next} $1==last+1{last=$1;next} {print first==last?first:first"-"last; first=last=$1} END{print first==last?first:first"-"last}' | \
+            paste -sd,
+    }
+
+    HOUSEKEEPING_CPUS=$(compact_cpu_list "$(echo "$housekeeping_expanded" | tr '\n' ',')")
+    ISOLATED_CPUS=$(compact_cpu_list "$isolated_list")
+
+    # Count physical cores being used
+    local hk_physical=2
+    local isolated_physical=$(( (num_cpus - $(echo "$housekeeping_expanded" | wc -l)) / $(cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list | tr ',' '\n' | wc -l) ))
+
+    echo "  Housekeeping: $HOUSEKEEPING_CPUS (${hk_physical} physical cores)"
+    echo "  Isolated: $ISOLATED_CPUS (${isolated_physical} physical cores)"
     echo ""
 }
 
