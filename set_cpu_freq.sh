@@ -143,27 +143,47 @@ set_frequency() {
         fi
     done
 
-    # Use cpupower to set frequency (works reliably with acpi-cpufreq)
-    if command -v cpupower &>/dev/null; then
-        echo "Using cpupower to set frequency..."
-        cpupower frequency-set -f ${freq_mhz}MHz 2>&1 | grep -E "Setting|cpu"
-        echo "  ✓ Frequency set via cpupower"
-    else
-        echo "  ✗ cpupower not available, falling back to sysfs method"
+    # Set frequency via sysfs - order matters!
+    # 1. First widen the range by setting max to hardware max
+    # 2. Then set min to target
+    # 3. Then set max to target (narrows range)
+    # 4. Finally set speed
+    echo "Setting frequency via sysfs..."
+    local success_count=0
+    local fail_count=0
 
-        # Fallback to sysfs method
-        local success_count=0
-        for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-            cpufreq_dir="$cpu_dir/cpufreq"
-            if [ -d "$cpufreq_dir" ]; then
+    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+        cpufreq_dir="$cpu_dir/cpufreq"
+        if [ -d "$cpufreq_dir" ]; then
+            # Get hardware limits
+            local hw_max=$(cat "$cpufreq_dir/cpuinfo_max_freq" 2>/dev/null || echo "$target_freq")
+            local hw_min=$(cat "$cpufreq_dir/cpuinfo_min_freq" 2>/dev/null || echo "$target_freq")
+
+            # Step 1: Widen range - set max to hardware max first
+            echo "$hw_max" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
+
+            # Step 2: Set min to target (or hw_min if target is below hw_min)
+            if [ "$target_freq" -ge "$hw_min" ]; then
                 echo "$target_freq" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
-                echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
-                echo "$target_freq" > "$cpufreq_dir/scaling_setspeed" 2>/dev/null || true
-                ((success_count++))
+            else
+                echo "$hw_min" > "$cpufreq_dir/scaling_min_freq" 2>/dev/null || true
             fi
-        done
-        echo "  ✓ Set frequency via sysfs for $success_count CPUs"
-    fi
+
+            # Step 3: Set max to target (narrows the range to pin frequency)
+            echo "$target_freq" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
+
+            # Step 4: Set speed explicitly (for userspace governor)
+            if [ -f "$cpufreq_dir/scaling_setspeed" ]; then
+                echo "$target_freq" > "$cpufreq_dir/scaling_setspeed" 2>/dev/null || true
+            fi
+
+            ((success_count++)) || true
+        fi
+    done
+
+    echo "  ✓ Configured $success_count CPUs"
+    echo "  Set scaling_min_freq = $target_freq"
+    echo "  Set scaling_max_freq = $target_freq"
 }
 
 verify_frequency() {
@@ -184,18 +204,23 @@ verify_frequency() {
         sample_cpus="$sample_cpus $((cpu_count / 4)) $((cpu_count / 2)) $((cpu_count * 3 / 4)) $((cpu_count - 1))"
     fi
 
+    printf "  %-6s %-10s %10s %10s %10s\n" "CPU" "Governor" "Min" "Max" "Current"
+    printf "  %-6s %-10s %10s %10s %10s\n" "---" "--------" "---" "---" "-------"
+
     for cpu_num in $sample_cpus; do
         cpufreq_dir="/sys/devices/system/cpu/cpu${cpu_num}/cpufreq"
 
         if [ -d "$cpufreq_dir" ]; then
             governor=$(cat "$cpufreq_dir/scaling_governor" 2>/dev/null || echo "N/A")
-            cur_freq=$(cat "$cpufreq_dir/scaling_cur_freq" 2>/dev/null || echo "N/A")
-            if [ "$cur_freq" != "N/A" ]; then
-                cur_mhz=$((cur_freq / 1000))
-                printf "  CPU %-3d: governor=%-10s freq=%d kHz (%d MHz)\n" "$cpu_num" "$governor" "$cur_freq" "$cur_mhz"
-            else
-                printf "  CPU %-3d: governor=%-10s freq=N/A\n" "$cpu_num" "$governor"
-            fi
+            cur_freq=$(cat "$cpufreq_dir/scaling_cur_freq" 2>/dev/null || echo "0")
+            min_freq=$(cat "$cpufreq_dir/scaling_min_freq" 2>/dev/null || echo "0")
+            max_freq=$(cat "$cpufreq_dir/scaling_max_freq" 2>/dev/null || echo "0")
+
+            cur_mhz=$((cur_freq / 1000))
+            min_mhz=$((min_freq / 1000))
+            max_mhz=$((max_freq / 1000))
+
+            printf "  %-6d %-10s %7d MHz %7d MHz %7d MHz\n" "$cpu_num" "$governor" "$min_mhz" "$max_mhz" "$cur_mhz"
         fi
     done
 
