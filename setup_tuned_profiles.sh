@@ -723,6 +723,71 @@ EOF
     echo "  ✓ Created $profile_name (${freq_mhz} MHz)"
 }
 
+# AMD Profile 1: cpu-partitioning-powersave with C2 max power state
+create_profile_amd_partitioning_powersave() {
+    local profile_name="powertest-amd-partitioning-powersave"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<EOF
+#
+# AMD CPU Partitioning with Powersave
+# Based on cpu-partitioning-powersave
+# Isolated: ${ISOLATED_CPUS}
+# Housekeeping: ${HOUSEKEEPING_CPUS}
+# Max C-state: C2
+#
+
+[main]
+summary=AMD CPU partitioning with powersave (C2 max)
+include=cpu-partitioning-powersave
+
+[variables]
+isolated_cores=${ISOLATED_CPUS}
+max_power_state=cstate.name:C2
+
+[bootloader]
+cmdline_isolation=nohz_full=${ISOLATED_CPUS} isolcpus=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}
+EOF
+
+    echo "  ✓ Created $profile_name"
+    echo "    isolated_cores=${ISOLATED_CPUS}"
+    echo "    max_power_state=cstate.name:C2"
+}
+
+# AMD Profile 2: cpu-partitioning only (no powersave, full C-states)
+create_profile_amd_partitioning() {
+    local profile_name="powertest-amd-partitioning"
+    local profile_dir="$TUNED_BASE_DIR/$profile_name"
+
+    echo "Creating profile: $profile_name"
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_dir/tuned.conf" <<EOF
+#
+# AMD CPU Partitioning
+# Based on cpu-partitioning
+# Isolated: ${ISOLATED_CPUS}
+# Housekeeping: ${HOUSEKEEPING_CPUS}
+#
+
+[main]
+summary=AMD CPU partitioning (performance)
+include=cpu-partitioning
+
+[variables]
+isolated_cores=${ISOLATED_CPUS}
+
+[bootloader]
+cmdline_isolation=nohz_full=${ISOLATED_CPUS} isolcpus=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}
+EOF
+
+    echo "  ✓ Created $profile_name"
+    echo "    isolated_cores=${ISOLATED_CPUS}"
+}
+
 main() {
     echo "========================================="
     echo "Setting up Tuned Profiles"
@@ -747,7 +812,7 @@ main() {
         exit 1
     fi
 
-    echo "Creating 8 tuned profiles for power measurement tests..."
+    echo "Creating tuned profiles for power measurement tests..."
     echo ""
 
     # Test 1: Idle deep C-state
@@ -765,6 +830,11 @@ main() {
     # Test 4: DPDK
     create_profile_test4_dpdk_nominal
     create_profile_test4_dpdk_min
+
+    # AMD-specific profiles (cpu-partitioning based)
+    echo ""
+    create_profile_amd_partitioning_powersave
+    create_profile_amd_partitioning
 
     local nominal_mhz=$((NOMINAL_FREQ / 1000))
     local min_mhz=$((MIN_FREQ / 1000))
@@ -791,14 +861,18 @@ main() {
     echo "  Test 4 (DPDK with CPU isolation):"
     echo "    - powertest-4-dpdk-nominal  (${nominal_mhz} MHz)"
     echo "    - powertest-4-dpdk-min      (${min_mhz} MHz)"
+    echo ""
+    echo "  AMD CPU Partitioning:"
+    echo "    - powertest-amd-partitioning-powersave  (C2 max, powersave)"
+    echo "    - powertest-amd-partitioning            (performance)"
     echo "    Housekeeping CPUs: ${HOUSEKEEPING_CPUS}"
     echo "    Isolated CPUs: ${ISOLATED_CPUS}"
     echo ""
     echo "Usage:"
-    echo "  tuned-adm profile powertest-1-c6-nominal"
+    echo "  tuned-adm profile powertest-amd-partitioning-powersave"
     echo "  tuned-adm active"
     echo ""
-    echo "Note: Test 4 profiles require reboot for CPU isolation to take effect"
+    echo "Note: CPU isolation profiles require reboot to take effect"
     echo "      Kernel params: isolcpus=${ISOLATED_CPUS} nohz_full=${ISOLATED_CPUS} rcu_nocbs=${ISOLATED_CPUS}"
 }
 
