@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # System Information Gathering Script for Power Measurement Project
-# Target: PowerEdge R450 - CentOS Stream 9
-# Purpose: Collect CPU, IPMI, RAPL, and C-state information
+# Target: PowerEdge R450/R7625 - CentOS Stream 9 (Intel/AMD)
+# Purpose: Collect CPU, IPMI, RAPL, C-state, and TuneD information
 
 set -u
 
@@ -227,18 +227,79 @@ echo ""
     echo "=== POWER MANAGEMENT CONFIGURATION ==="
     echo ""
 
+    echo "CPU Frequency Driver:"
+    if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver ]; then
+        cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver
+    else
+        echo "scaling_driver not available"
+    fi
+    echo ""
+
     echo "Intel P-state driver:"
     if [ -d /sys/devices/system/cpu/intel_pstate ]; then
         echo "Intel P-state is active"
         echo "Status: $(cat /sys/devices/system/cpu/intel_pstate/status 2>/dev/null || echo 'N/A')"
         echo "No Turbo: $(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo 'N/A')"
     else
-        echo "Intel P-state not active (using acpi-cpufreq or other)"
+        echo "Intel P-state not active"
+    fi
+    echo ""
+
+    echo "AMD P-state driver:"
+    if [ -d /sys/devices/system/cpu/amd_pstate ]; then
+        echo "AMD P-state is active"
+        echo "Status: $(cat /sys/devices/system/cpu/amd_pstate/status 2>/dev/null || echo 'N/A')"
+    else
+        echo "AMD P-state not active (using acpi-cpufreq or other)"
+    fi
+    echo ""
+
+    echo "CPUIdle Driver:"
+    if [ -f /sys/devices/system/cpu/cpuidle/current_driver ]; then
+        cat /sys/devices/system/cpu/cpuidle/current_driver
+    else
+        echo "cpuidle driver info not available"
+    fi
+    echo ""
+
+    echo "CPUIdle Governor:"
+    if [ -f /sys/devices/system/cpu/cpuidle/current_governor ]; then
+        cat /sys/devices/system/cpu/cpuidle/current_governor
+    else
+        echo "cpuidle governor info not available"
+    fi
+    echo ""
+
+    echo "PM QoS CPU DMA Latency:"
+    if [ -f /sys/devices/system/cpu/cpu0/power/pm_qos_resume_latency_us ]; then
+        cat /sys/devices/system/cpu/cpu0/power/pm_qos_resume_latency_us
+    else
+        echo "pm_qos_resume_latency not available"
+    fi
+    echo ""
+
+    echo "=== TUNED PROFILE INFORMATION ==="
+    echo ""
+
+    if command -v tuned-adm &> /dev/null; then
+        echo "TuneD Service Status:"
+        systemctl is-active tuned 2>/dev/null || echo "tuned service not running"
+        echo ""
+
+        echo "Active TuneD Profile:"
+        tuned-adm active 2>/dev/null || echo "Could not get active profile"
+        echo ""
+
+        echo "Available TuneD Profiles:"
+        tuned-adm list 2>/dev/null || echo "Could not list profiles"
+        echo ""
+    else
+        echo "tuned-adm not available (install: sudo dnf install tuned)"
     fi
     echo ""
 
     echo "Kernel Boot Parameters (power/cpu related):"
-    cat /proc/cmdline | tr ' ' '\n' | grep -E "intel|cpu|idle|power|freq" || echo "No relevant parameters found"
+    cat /proc/cmdline | tr ' ' '\n' | grep -E "intel|amd|cpu|idle|power|freq|pstate" || echo "No relevant parameters found"
     echo ""
 
     # ============================================
