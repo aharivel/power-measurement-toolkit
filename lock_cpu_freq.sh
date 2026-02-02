@@ -12,23 +12,23 @@ SCRIPT_NAME=$(basename "$0")
 
 # CPU frequency values (in kHz)
 MIN_FREQ_KHZ=800000      # Minimum frequency
-NOMINAL_FREQ_KHZ=2300000 # Nominal frequency
+NOMINAL_FREQ_KHZ=2000000 # Nominal frequency (Intel Xeon Gold 6433N base freq)
 
 usage() {
     cat <<EOF
-Usage: sudo $SCRIPT_NAME [800|2300]
+Usage: sudo $SCRIPT_NAME [800|2000]
 
 Locks CPU frequency by setting scaling_min_freq = scaling_max_freq.
 
 Arguments:
     800      Lock all CPUs to 800 MHz
-    2300     Lock all CPUs to 2300 MHz
+    2000     Lock all CPUs to 2000 MHz (nominal)
 
 This forces the CPU to stay at the specified frequency regardless of load.
 
 Examples:
     sudo $SCRIPT_NAME 800     # Lock to 800 MHz
-    sudo $SCRIPT_NAME 2300    # Lock to 2300 MHz
+    sudo $SCRIPT_NAME 2000    # Lock to 2000 MHz
 EOF
     exit 1
 }
@@ -124,7 +124,7 @@ verify_frequency() {
 
     # Check sample CPUs
     local all_locked=true
-    for cpu_num in 0 1 10 20 30 39; do
+    for cpu_num in 0 1 10 20 30 40 50 63; do
         cpufreq_dir="/sys/devices/system/cpu/cpu${cpu_num}/cpufreq"
 
         if [ ! -d "$cpufreq_dir" ]; then
@@ -181,13 +181,13 @@ main() {
             lock_frequency "$MIN_FREQ_KHZ"
             verify_frequency
             ;;
-        2300)
+        2000)
             lock_frequency "$NOMINAL_FREQ_KHZ"
             verify_frequency
             ;;
         *)
             echo "ERROR: Invalid frequency '$freq_arg'" >&2
-            echo "       Must be 800 or 2300" >&2
+            echo "       Must be 800 or 2000" >&2
             echo ""
             usage
             ;;

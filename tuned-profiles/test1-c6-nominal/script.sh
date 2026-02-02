@@ -1,12 +1,12 @@
 #!/bin/bash
 #
 # Script for Test 1 C6 Nominal profile
-# Sets CPU frequency to 2300 MHz and enables C6 states
+# Sets CPU frequency to 2000 MHz and enables C6 states
 #
 
 . /usr/lib/tuned/functions
 
-NOMINAL_FREQ=2300000  # 2300 MHz in kHz
+NOMINAL_FREQ=2000000  # 2000 MHz in kHz (Intel Xeon Gold 6433N base freq)
 
 start() {
     # Disable turbo

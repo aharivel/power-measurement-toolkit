@@ -39,17 +39,17 @@ Examples:
     sudo $SCRIPT_NAME restore
 
 Notes:
-    System has 40 CPUs (0-39):
-    - CPU 0-19: Physical cores 0-19 (thread 0)
-    - CPU 20-39: Physical cores 0-19 (thread 1)
+    System has 64 CPUs (0-63) - Dell PowerEdge XR8620t, Intel Xeon Gold 6433N:
+    - CPU 0-31: Physical cores 0-31 (thread 0)
+    - CPU 32-63: Physical cores 0-31 (thread 1)
 
     For isolation, typically use:
     - CPUs 0-3: Housekeeping (OS, monitoring tool)
-    - CPUs 4-39: Isolated for workload
+    - CPUs 4-63: Isolated for workload
 
     This uses cpusets for isolation (doesn't require reboot).
     For persistent isolation across reboots, use kernel parameter:
-      isolcpus=4-39
+      isolcpus=4-63
 EOF
     exit 1
 }
