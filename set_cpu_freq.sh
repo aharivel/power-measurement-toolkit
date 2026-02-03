@@ -23,8 +23,9 @@ detect_platform() {
         # - Max turbo: 3600 MHz
         # - Min: read from sysfs (typically 800 MHz)
 
-        if [ "$DRIVER" = "intel_pstate" ]; then
-            # intel_pstate driver - read from sysfs
+        if [ "$DRIVER" = "intel_pstate" ] || [ "$DRIVER" = "intel_cpufreq" ]; then
+            # intel_pstate (active) or intel_cpufreq (passive mode) driver
+            # intel_cpufreq is intel_pstate running in passive mode
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
             MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3600000")
             # Base/nominal frequency for Xeon Gold 6433N is 2000 MHz
@@ -80,7 +81,7 @@ Arguments:
 
 Requirements:
     - Must run as root (sudo)
-    - Intel P-state or acpi-cpufreq driver
+    - Intel P-state, intel_cpufreq (passive), or acpi-cpufreq driver
 
 Examples:
     sudo $SCRIPT_NAME nominal    # Set to ${nominal_mhz} MHz (base frequency)
