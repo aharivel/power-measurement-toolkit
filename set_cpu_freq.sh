@@ -182,6 +182,14 @@ set_frequency() {
     else
         echo "  ! Userspace governor not available, using frequency limits only"
         USE_USERSPACE=false
+        
+        # For intel_pstate in active mode, we need to use performance governor
+        # and rely on frequency limits
+        if [ "$DRIVER" = "intel_pstate" ] && [ "$avail_govs" = "performance powersave" ]; then
+            echo "  ! Detected intel_pstate in active mode"
+            echo "  ! Using performance governor with frequency limits"
+            set_governor "performance"
+        fi
     fi
     echo ""
 
