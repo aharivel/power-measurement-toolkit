@@ -31,6 +31,13 @@ detect_platform() {
             # Base/nominal frequency for Xeon Gold 6433N is 2000 MHz
             # Intel doesn't expose base_frequency easily, so we hardcode it
             NOMINAL_FREQ_KHZ=2000000
+            
+            # Check if intel_pstate is in passive mode (intel_cpufreq)
+            if [ "$DRIVER" = "intel_cpufreq" ] || ([ -f /sys/devices/system/cpu/intel_pstate/status ] && [ "$(cat /sys/devices/system/cpu/intel_pstate/status)" = "passive" ]); then
+                INTEL_PSTATE_MODE="passive"
+            else
+                INTEL_PSTATE_MODE="active"
+            fi
         elif [ "$DRIVER" = "acpi-cpufreq" ]; then
             # acpi-cpufreq uses discrete P-states
             local avail_freqs=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies 2>/dev/null)
@@ -69,7 +76,7 @@ Usage: sudo $SCRIPT_NAME [nominal|min]
 
 Sets CPU frequency for all CPUs on Intel Xeon Gold 6433N.
 
-Platform: $PLATFORM (driver: $DRIVER)
+Platform: $PLATFORM (driver: $DRIVER, pstate mode: ${INTEL_PSTATE_MODE:-unknown})
 CPU Frequencies:
     Minimum:  ${min_mhz} MHz
     Nominal:  ${nominal_mhz} MHz (base frequency)
@@ -90,6 +97,7 @@ Examples:
 Notes:
     - This script sets the same frequency for all CPUs
     - Uses the 'userspace' governor to pin frequency (if available)
+    - For intel_cpufreq (passive mode), uses frequency limits with appropriate governor
     - Disables turbo boost for consistent measurements
     - Changes persist until reboot or manual change
 EOF
@@ -133,8 +141,24 @@ set_governor() {
     local success=0
     local fail=0
 
-    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
+    # Handle systems with many CPUs (up to cpu63)
+    for cpu_num in $(seq 0 63); do
+        cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
         cpufreq_dir="$cpu_dir/cpufreq"
+        
+        # Skip if CPU directory doesn't exist
+        if [ ! -d "$cpu_dir" ]; then
+            continue
+        fi
+        
+        # Skip offline CPUs
+        if [ -f "$cpu_dir/online" ]; then
+            online=$(cat "$cpu_dir/online" 2>/dev/null || echo "1")
+            if [ "$online" != "1" ]; then
+                continue
+            fi
+        fi
+        
         if [ -f "$cpufreq_dir/scaling_governor" ]; then
             if echo "$governor" > "$cpufreq_dir/scaling_governor" 2>/dev/null; then
                 ((success++))
@@ -160,7 +184,7 @@ set_frequency() {
     echo "CPU Frequency Configuration"
     echo "=========================================="
     echo ""
-    echo "Platform: $PLATFORM (driver: $DRIVER)"
+    echo "Platform: $PLATFORM (driver: $DRIVER, pstate mode: ${INTEL_PSTATE_MODE:-unknown})"
     echo "Target: ${mode_name} frequency - ${freq_mhz} MHz"
     echo ""
 
@@ -177,6 +201,7 @@ set_frequency() {
     # Check if userspace is available
     local avail_govs=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null || echo "")
     if echo "$avail_govs" | grep -q "userspace"; then
+        echo "  ✓ Userspace governor available, using it for precise frequency control"
         set_governor "userspace"
         USE_USERSPACE=true
     else
@@ -189,6 +214,17 @@ set_frequency() {
             echo "  ! Detected intel_pstate in active mode"
             echo "  ! Using performance governor with frequency limits"
             set_governor "performance"
+        elif [ "$DRIVER" = "intel_cpufreq" ] || [ "${INTEL_PSTATE_MODE}" = "passive" ]; then
+            echo "  ✓ Detected intel_cpufreq (passive mode)"
+            echo "  ✓ Using userspace governor for precise frequency control"
+            # For intel_cpufreq, userspace should be available
+            if echo "$avail_govs" | grep -q "userspace"; then
+                set_governor "userspace"
+                USE_USERSPACE=true
+            else
+                echo "  ! Userspace not available even in passive mode, falling back to performance"
+                set_governor "performance"
+            fi
         fi
     fi
     echo ""
@@ -204,14 +240,21 @@ set_frequency() {
     local success_count=0
     local fail_count=0
 
-    for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
-        cpu_num=$(basename "$cpu_dir" | sed 's/cpu//')
+    # Handle systems with many CPUs (up to cpu63)
+    for cpu_num in $(seq 0 63); do
+        cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
         cpufreq_dir="$cpu_dir/cpufreq"
+
+        # Skip if CPU directory doesn't exist
+        if [ ! -d "$cpu_dir" ]; then
+            continue
+        fi
 
         # Skip offline CPUs
         if [ -f "$cpu_dir/online" ]; then
             online=$(cat "$cpu_dir/online" 2>/dev/null || echo "1")
             if [ "$online" != "1" ]; then
+                echo "  - CPU${cpu_num}: offline, skipping"
                 continue
             fi
         fi
@@ -220,6 +263,8 @@ set_frequency() {
             # Get hardware limits
             local hw_max=$(cat "$cpufreq_dir/cpuinfo_max_freq" 2>/dev/null || echo "$target_freq")
             local hw_min=$(cat "$cpufreq_dir/cpuinfo_min_freq" 2>/dev/null || echo "$target_freq")
+
+            echo "  Configuring CPU${cpu_num}..."
 
             # Step 1: Widen range - set max to hardware max first
             echo "$hw_max" > "$cpufreq_dir/scaling_max_freq" 2>/dev/null || true
@@ -241,6 +286,7 @@ set_frequency() {
 
             ((success_count++)) || true
         else
+            echo "  - CPU${cpu_num}: no cpufreq directory, skipping"
             ((fail_count++)) || true
         fi
     done
@@ -265,19 +311,15 @@ verify_frequency() {
     # Wait for frequencies to settle
     sleep 2
 
-    # Get total CPU count for sampling
-    local cpu_count=$(nproc)
-
-    # Sample CPUs: first, second, quarters, last
-    local sample_cpus="0 1"
-    if [ "$cpu_count" -gt 10 ]; then
-        sample_cpus="$sample_cpus $((cpu_count / 4)) $((cpu_count / 2)) $((cpu_count * 3 / 4)) $((cpu_count - 1))"
-    fi
+    # Sample a few CPUs for verification (first, middle, last)
+    local sample_cpus="0 31 63"
 
     printf "  %-6s %-12s %10s %10s %10s\n" "CPU" "Governor" "Min" "Max" "Current"
     printf "  %-6s %-12s %10s %10s %10s\n" "---" "--------" "---" "---" "-------"
 
     local all_ok=true
+    local checked_cpus=0
+    
     for cpu_num in $sample_cpus; do
         cpufreq_dir="/sys/devices/system/cpu/cpu${cpu_num}/cpufreq"
 
@@ -309,11 +351,12 @@ verify_frequency() {
 
             printf "  %-6d %-12s %7d MHz %7d MHz %7d MHz %s\n" \
                 "$cpu_num" "$governor" "$min_mhz" "$max_mhz" "$cur_mhz" "$status"
+            ((checked_cpus++))
         fi
     done
 
     echo ""
-    if [ "$all_ok" = true ]; then
+    if [ "$all_ok" = true ] && [ $checked_cpus -gt 0 ]; then
         echo "✓ All sampled CPUs locked correctly"
     else
         echo "⚠ Some CPUs may not be locked correctly"
