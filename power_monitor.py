@@ -42,8 +42,8 @@ class PowerMonitor:
             else:
                 break
 
-        # Previous RAPL reading for delta calculation (summed across all packages)
-        self.prev_rapl_energy = None
+        # Previous RAPL readings per package for delta calculation
+        self.prev_rapl_energies = [None] * len(self.rapl_energy_files)
         self.prev_rapl_time = None
 
         # Validate interfaces
@@ -123,56 +123,46 @@ class PowerMonitor:
                 print(f"Warning: Error reading IPMI: {e}", file=sys.stderr)
             return None
 
-    def read_rapl_energy(self):
+    def read_rapl_energies(self):
         """
-        Read RAPL energy counters from all packages and return sum in microjoules.
-        Returns total energy in microjoules, or None on error.
+        Read RAPL energy counter for each package.
+        Returns list of energy values in microjoules (one per package), or None on error.
         """
         try:
-            total = 0
+            energies = []
             for energy_file in self.rapl_energy_files:
                 with open(energy_file, 'r') as f:
-                    total += int(f.read().strip())
-            return total
+                    energies.append(int(f.read().strip()))
+            return energies
         except Exception as e:
             if self.verbose:
                 print(f"Warning: Error reading RAPL: {e}", file=sys.stderr)
             return None
 
-    def calculate_rapl_power(self, energy_uj, timestamp):
+    def calculate_rapl_powers(self, energies, timestamp):
         """
-        Calculate average power from RAPL energy delta
-        Returns power in Watts, or None if this is first reading
+        Calculate per-package power from RAPL energy deltas.
+        Returns list of power values in Watts (one per package), or None on first reading.
         """
-        if self.prev_rapl_energy is None:
-            # First reading - just store it
-            self.prev_rapl_energy = energy_uj
+        if self.prev_rapl_energies[0] is None:
+            self.prev_rapl_energies = list(energies)
             self.prev_rapl_time = timestamp
             return None
 
-        # Calculate delta
-        energy_delta_uj = energy_uj - self.prev_rapl_energy
         time_delta_s = timestamp - self.prev_rapl_time
-
-        # Handle counter rollover (energy counter is typically 32-bit)
-        # Max value around 4.3 billion microjoules = ~4300 joules
-        if energy_delta_uj < 0:
-            # Counter rolled over
-            max_counter = 2**32  # Approximate, actual may vary
-            energy_delta_uj += max_counter
-
-        # Store current values for next iteration
-        self.prev_rapl_energy = energy_uj
-        self.prev_rapl_time = timestamp
-
-        # Avoid division by zero
         if time_delta_s <= 0:
             return None
 
-        # Convert to Watts: (microjoules / time_s) / 1,000,000 = Watts
-        power_w = (energy_delta_uj / time_delta_s) / 1_000_000
+        powers = []
+        for i, energy_uj in enumerate(energies):
+            delta = energy_uj - self.prev_rapl_energies[i]
+            if delta < 0:
+                delta += 2**32  # counter rollover
+            powers.append((delta / time_delta_s) / 1_000_000)
 
-        return power_w
+        self.prev_rapl_energies = list(energies)
+        self.prev_rapl_time = timestamp
+        return powers
 
     def take_measurement(self):
         """
@@ -185,28 +175,34 @@ class PowerMonitor:
         # Read IPMI
         ipmi_power = self.read_ipmi_power()
 
-        # Read RAPL
-        rapl_energy = self.read_rapl_energy()
-        rapl_power = None
-        if rapl_energy is not None:
-            rapl_power = self.calculate_rapl_power(rapl_energy, timestamp)
+        # Read RAPL per package
+        rapl_energies = self.read_rapl_energies()
+        rapl_powers = None
+        if rapl_energies is not None:
+            rapl_powers = self.calculate_rapl_powers(rapl_energies, timestamp)
 
         measurement = {
             'timestamp': timestamp_str,
             'timestamp_unix': timestamp,
             'ipmi_watts': ipmi_power,
-            'rapl_pkg_watts': rapl_power,
-            'rapl_energy_uj': rapl_energy
         }
+        for i in range(len(self.rapl_energy_files)):
+            pkg_watts = rapl_powers[i] if rapl_powers is not None else None
+            pkg_energy = rapl_energies[i] if rapl_energies is not None else None
+            measurement[f'rapl_pkg{i}_watts'] = pkg_watts
+            measurement[f'rapl_pkg{i}_energy_uj'] = pkg_energy
 
         return measurement
 
     def print_measurement(self, measurement):
         """Print measurement to console"""
         ipmi_str = f"{measurement['ipmi_watts']:.2f}W" if measurement['ipmi_watts'] is not None else "N/A"
-        rapl_str = f"{measurement['rapl_pkg_watts']:.2f}W" if measurement['rapl_pkg_watts'] is not None else "N/A"
-
-        print(f"[{measurement['timestamp']}] IPMI: {ipmi_str:>10} | RAPL Package: {rapl_str:>10}")
+        rapl_parts = []
+        for i in range(len(self.rapl_energy_files)):
+            val = measurement.get(f'rapl_pkg{i}_watts')
+            rapl_parts.append(f"pkg{i}: {val:.2f}W" if val is not None else f"pkg{i}: N/A")
+        rapl_str = " | ".join(rapl_parts)
+        print(f"[{measurement['timestamp']}] IPMI: {ipmi_str:>10} | RAPL {rapl_str}")
 
     def save_to_csv(self):
         """Save all measurements to CSV file"""
@@ -215,8 +211,10 @@ class PowerMonitor:
 
         try:
             with open(self.output_file, 'w', newline='') as f:
-                fieldnames = ['timestamp', 'timestamp_unix', 'ipmi_watts',
-                             'rapl_pkg_watts', 'rapl_energy_uj']
+                rapl_fields = []
+                for i in range(len(self.rapl_energy_files)):
+                    rapl_fields += [f'rapl_pkg{i}_watts', f'rapl_pkg{i}_energy_uj']
+                fieldnames = ['timestamp', 'timestamp_unix', 'ipmi_watts'] + rapl_fields
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(self.measurements)
