@@ -28,12 +28,13 @@ class PowerMonitor:
         self.running = False
         self.measurements = []
 
-        # RAPL paths
+        # RAPL paths - discover all packages (multi-socket support)
         self.rapl_base = Path("/sys/class/powercap/intel-rapl")
-        self.rapl_package = self.rapl_base / "intel-rapl:0"
-        self.rapl_energy_file = self.rapl_package / "energy_uj"
+        self.rapl_energy_files = sorted(
+            self.rapl_base.glob("intel-rapl:*/energy_uj")
+        )
 
-        # Previous RAPL reading for delta calculation
+        # Previous RAPL reading for delta calculation (summed across all packages)
         self.prev_rapl_energy = None
         self.prev_rapl_time = None
 
@@ -57,13 +58,11 @@ class PowerMonitor:
             errors.append(f"Error checking ipmitool: {e}")
 
         # Check RAPL
-        if not self.rapl_energy_file.exists():
-            errors.append(f"RAPL interface not found at {self.rapl_energy_file}")
-
-        # Check permissions
-        if self.rapl_energy_file.exists():
+        if not self.rapl_energy_files:
+            errors.append(f"RAPL interface not found under {self.rapl_base}")
+        else:
             try:
-                with open(self.rapl_energy_file, 'r') as f:
+                with open(self.rapl_energy_files[0], 'r') as f:
                     f.read()
             except PermissionError:
                 errors.append("Permission denied reading RAPL (try running with sudo)")
@@ -118,13 +117,15 @@ class PowerMonitor:
 
     def read_rapl_energy(self):
         """
-        Read RAPL energy counter
-        Returns energy in microjoules, or None on error
+        Read RAPL energy counters from all packages and return sum in microjoules.
+        Returns total energy in microjoules, or None on error.
         """
         try:
-            with open(self.rapl_energy_file, 'r') as f:
-                energy_uj = int(f.read().strip())
-            return energy_uj
+            total = 0
+            for energy_file in self.rapl_energy_files:
+                with open(energy_file, 'r') as f:
+                    total += int(f.read().strip())
+            return total
         except Exception as e:
             if self.verbose:
                 print(f"Warning: Error reading RAPL: {e}", file=sys.stderr)

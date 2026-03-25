@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Power Measurement CPU Frequency Toggle Script
-# Toggles between minimum (800 MHz) and nominal (2000 MHz) frequencies
+# Toggles between minimum (800 MHz) and nominal (2200 MHz) frequencies
 # Designed for Intel Xeon 6780E with 288 physical cores (no HT)
 # NUMA 0: CPUs 0-71, 144-215
 # NUMA 1: CPUs 72-143, 216-287
@@ -12,7 +12,7 @@ SCRIPT_NAME=$(basename "$0")
 
 # Configuration
 MIN_FREQ_KHZ=800000    # 800 MHz
-NOMINAL_FREQ_KHZ=2000000 # 2000 MHz (base frequency for Xeon 6780E)
+NOMINAL_FREQ_KHZ=2200000 # 2200 MHz (base frequency for Xeon 6780E)
 CPU_COUNT=288          # Number of logical CPUs (0-287)
 
 check_root() {
@@ -31,12 +31,12 @@ For Intel Xeon 6780E with intel_cpufreq driver (288 logical CPUs)
 
 Arguments:
     min       Set all CPUs to minimum frequency (800 MHz)
-    nominal   Set all CPUs to nominal frequency (2000 MHz)
+    nominal   Set all CPUs to nominal frequency (2200 MHz)
     status    Show current CPU frequency status
 
 Examples:
     sudo $SCRIPT_NAME min        # Set to 800 MHz for power measurement
-    sudo $SCRIPT_NAME nominal    # Set to 2000 MHz for baseline
+    sudo $SCRIPT_NAME nominal    # Set to 2200 MHz for baseline
     sudo $SCRIPT_NAME status     # Check current settings
 EOF
     exit 1
@@ -162,7 +162,7 @@ main() {
             echo "✓ Ready for power measurement"
             ;;
         
-        nominal|base|2000)
+        nominal|base|2200)
             echo "=========================================="
             echo "Setting CPUs to NOMINAL Frequency"
             echo "=========================================="
@@ -173,7 +173,7 @@ main() {
             set_all_cpus_frequency "$NOMINAL_FREQ_KHZ" "nominal"
             
             echo ""
-            echo "✓ All CPUs set to 2000 MHz (nominal frequency)"
+            echo "✓ All CPUs set to 2200 MHz (nominal frequency)"
             echo "✓ Turbo boost disabled"
             echo "✓ Ready for baseline measurement"
             ;;

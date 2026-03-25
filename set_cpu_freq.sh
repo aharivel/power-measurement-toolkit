@@ -19,7 +19,7 @@ detect_platform() {
         PLATFORM="Intel"
 
         # Intel Xeon 6780E specs:
-        # - Base frequency: 2000 MHz
+        # - Base frequency: 2200 MHz
         # - Max turbo: 3000 MHz
         # - Min: read from sysfs (typically 800 MHz)
 
@@ -28,9 +28,9 @@ detect_platform() {
             # intel_cpufreq is intel_pstate running in passive mode
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
             MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
-            # Base/nominal frequency for Xeon 6780E is 2000 MHz
+            # Base/nominal frequency for Xeon 6780E is 2200 MHz
             # Intel doesn't expose base_frequency easily, so we hardcode it
-            NOMINAL_FREQ_KHZ=2000000
+            NOMINAL_FREQ_KHZ=2200000
             
             # Check if intel_pstate is in passive mode (intel_cpufreq)
             if [ "$DRIVER" = "intel_cpufreq" ] || ([ -f /sys/devices/system/cpu/intel_pstate/status ] && [ "$(cat /sys/devices/system/cpu/intel_pstate/status)" = "passive" ]); then
@@ -48,12 +48,12 @@ detect_platform() {
                 MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
                 MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
             fi
-            NOMINAL_FREQ_KHZ=2000000
+            NOMINAL_FREQ_KHZ=2200000
         else
             # Generic fallback
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
             MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
-            NOMINAL_FREQ_KHZ=2000000
+            NOMINAL_FREQ_KHZ=2200000
         fi
     else
         echo "ERROR: This script is designed for Intel platforms." >&2
@@ -377,7 +377,7 @@ main() {
     local min_mhz=$((MIN_FREQ_KHZ / 1000))
 
     case "$mode" in
-        nominal|base|2000)
+        nominal|base|2200)
             set_frequency "$NOMINAL_FREQ_KHZ" "nominal/base"
             verify_frequency "$NOMINAL_FREQ_KHZ"
             echo ""

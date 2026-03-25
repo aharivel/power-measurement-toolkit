@@ -71,10 +71,10 @@ if [ -f /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq ]; then
         print_check "warn" "Min frequency: $((min_freq / 1000)) MHz (expected 800 MHz)"
     fi
 
-    if [ "$max_freq" -ge "2000000" ]; then
+    if [ "$max_freq" -ge "2200000" ]; then
         print_check "ok" "Max frequency: $((max_freq / 1000)) MHz"
     else
-        print_check "error" "Max frequency: $((max_freq / 1000)) MHz (expected >= 2000 MHz)"
+        print_check "error" "Max frequency: $((max_freq / 1000)) MHz (expected >= 2200 MHz)"
         echo "     Check BIOS settings: Turbo Boost, C-States, CPU Power Management"
     fi
 else

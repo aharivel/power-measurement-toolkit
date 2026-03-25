@@ -18,7 +18,7 @@ TUNED_BASE_DIR="/etc/tuned"
 
 # CPU frequency values (kHz) for Intel Xeon 6780E
 MIN_FREQ=800000
-NOMINAL_FREQ=2000000
+NOMINAL_FREQ=2200000
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -36,7 +36,7 @@ create_profile_test1_c6_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 1: Idle with C6 state, Nominal frequency (2000 MHz)
+# Test 1: Idle with C6 state, Nominal frequency (2200 MHz)
 #
 
 [main]
@@ -59,14 +59,14 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2000 MHz)
+    # Set frequency to nominal (2200 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states (including C6)
@@ -162,7 +162,7 @@ create_profile_test2_c1_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 2: Idle with C1 state, Nominal frequency (2000 MHz)
+# Test 2: Idle with C1 state, Nominal frequency (2200 MHz)
 #
 
 [main]
@@ -183,25 +183,26 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2000 MHz)
+    # Set frequency to nominal (2200 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Disable C1E and C6, keep only C1
+    # Keep only POLL (state0) and C1 (state1), disable C1E/C6S/C6SP
     for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu/cpuidle" ] || continue
-        # Enable POLL and C1
+        # Enable POLL (state0) and C1 (state1)
         [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
         [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
-        # Disable C1E and C6
+        # Disable C1E (state2), C6S (state3), C6SP (state4)
         [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
         [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state4/disable" ] && echo 1 > "$cpu/cpuidle/state4/disable" 2>/dev/null || true
     done
 
     return 0
@@ -266,13 +267,16 @@ start() {
         echo 800000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
-    # Disable C1E and C6, keep only C1
+    # Keep only POLL (state0) and C1 (state1), disable C1E/C6S/C6SP
     for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu/cpuidle" ] || continue
+        # Enable POLL (state0) and C1 (state1)
         [ -f "$cpu/cpuidle/state0/disable" ] && echo 0 > "$cpu/cpuidle/state0/disable" 2>/dev/null || true
         [ -f "$cpu/cpuidle/state1/disable" ] && echo 0 > "$cpu/cpuidle/state1/disable" 2>/dev/null || true
+        # Disable C1E (state2), C6S (state3), C6SP (state4)
         [ -f "$cpu/cpuidle/state2/disable" ] && echo 1 > "$cpu/cpuidle/state2/disable" 2>/dev/null || true
         [ -f "$cpu/cpuidle/state3/disable" ] && echo 1 > "$cpu/cpuidle/state3/disable" 2>/dev/null || true
+        [ -f "$cpu/cpuidle/state4/disable" ] && echo 1 > "$cpu/cpuidle/state4/disable" 2>/dev/null || true
     done
 
     return 0
@@ -303,7 +307,7 @@ create_profile_test3_stress_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 3: CPU Stress test, Nominal frequency (2000 MHz)
+# Test 3: CPU Stress test, Nominal frequency (2200 MHz)
 #
 
 [main]
@@ -324,13 +328,13 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2000 MHz)
+    # Set frequency to nominal (2200 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
@@ -423,7 +427,7 @@ create_profile_test4_dpdk_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 4: DPDK workload, Nominal frequency (2000 MHz)
+# Test 4: DPDK workload, Nominal frequency (2200 MHz)
 # With CPU isolation
 #
 
@@ -456,13 +460,13 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2000 MHz)
+    # Set frequency to nominal (2200 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2200000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
@@ -508,8 +512,9 @@ governor=userspace
 energy_perf_bias=performance
 
 [variables]
-# Isolate NUMA0 physical CPUs 4-71 for DPDK (keep 0-3 for housekeeping)
-isolated_cores=4-71
+# Housekeeping: CPU 0 (NUMA0) and CPU 72 (NUMA1) only
+# Isolate all other CPUs: 1-71, 73-143, 144-287 (no HT on Xeon 6780E, all are physical cores)
+isolated_cores=1-71,73-143,144-287
 
 [script]
 script=${i:PROFILE_DIR}/script.sh
@@ -597,19 +602,19 @@ main() {
     echo ""
     echo "Available profiles:"
     echo "  Test 1 (Idle C6):"
-    echo "    - powertest-1-c6-nominal  (2000 MHz)"
+    echo "    - powertest-1-c6-nominal  (2200 MHz)"
     echo "    - powertest-1-c6-min      (800 MHz)"
     echo ""
     echo "  Test 2 (Idle C1):"
-    echo "    - powertest-2-c1-nominal  (2000 MHz)"
+    echo "    - powertest-2-c1-nominal  (2200 MHz)"
     echo "    - powertest-2-c1-min      (800 MHz)"
     echo ""
     echo "  Test 3 (Stress):"
-    echo "    - powertest-3-stress-nominal  (2000 MHz)"
+    echo "    - powertest-3-stress-nominal  (2200 MHz)"
     echo "    - powertest-3-stress-min      (800 MHz)"
     echo ""
     echo "  Test 4 (DPDK):"
-    echo "    - powertest-4-dpdk-nominal  (2000 MHz)"
+    echo "    - powertest-4-dpdk-nominal  (2200 MHz)"
     echo "    - powertest-4-dpdk-min      (800 MHz)"
     echo ""
     echo "Usage:"
