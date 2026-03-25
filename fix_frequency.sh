@@ -7,9 +7,9 @@
 
 set -euo pipefail
 
-TARGET_FREQ=2300000  # 2300 MHz in kHz
+TARGET_FREQ=2000000  # 2000 MHz in kHz (Xeon 6780E nominal)
 
-echo "Setting all CPUs to ${TARGET_FREQ} kHz (2300 MHz)..."
+echo "Setting all CPUs to ${TARGET_FREQ} kHz (2000 MHz)..."
 echo ""
 
 # Disable turbo

@@ -12,7 +12,7 @@ SCRIPT_NAME=$(basename "$0")
 
 # CPU frequency values (in kHz)
 MIN_FREQ_KHZ=800000      # Minimum frequency
-NOMINAL_FREQ_KHZ=2000000 # Nominal frequency (Intel Xeon Gold 6433N base freq)
+NOMINAL_FREQ_KHZ=2000000 # Nominal frequency (Intel Xeon 6780E base freq)
 
 usage() {
     cat <<EOF
@@ -124,7 +124,7 @@ verify_frequency() {
 
     # Check sample CPUs
     local all_locked=true
-    for cpu_num in 0 1 10 20 30 40 50 63; do
+    for cpu_num in 0 1 71 72 143 144 215 216 287; do
         cpufreq_dir="/sys/devices/system/cpu/cpu${cpu_num}/cpufreq"
 
         if [ ! -d "$cpufreq_dir" ]; then

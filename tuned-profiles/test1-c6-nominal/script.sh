@@ -6,7 +6,7 @@
 
 . /usr/lib/tuned/functions
 
-NOMINAL_FREQ=2000000  # 2000 MHz in kHz (Intel Xeon Gold 6433N base freq)
+NOMINAL_FREQ=2000000  # 2000 MHz in kHz (Intel Xeon 6780E base freq)
 
 start() {
     # Disable turbo

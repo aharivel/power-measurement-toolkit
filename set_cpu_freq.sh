@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# CPU Frequency Configuration Script for Intel Xeon Gold 6433N
+# CPU Frequency Configuration Script for Intel Xeon 6780E
 # Sets all CPUs to either nominal (base) or minimum frequency
 #
 # Usage: sudo ./set_cpu_freq.sh [nominal|min]
@@ -18,17 +18,17 @@ detect_platform() {
     if [ "$vendor" = "GenuineIntel" ]; then
         PLATFORM="Intel"
 
-        # Intel Xeon Gold 6433N specs:
+        # Intel Xeon 6780E specs:
         # - Base frequency: 2000 MHz
-        # - Max turbo: 3600 MHz
+        # - Max turbo: 3000 MHz
         # - Min: read from sysfs (typically 800 MHz)
 
         if [ "$DRIVER" = "intel_pstate" ] || [ "$DRIVER" = "intel_cpufreq" ]; then
             # intel_pstate (active) or intel_cpufreq (passive mode) driver
             # intel_cpufreq is intel_pstate running in passive mode
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
-            MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3600000")
-            # Base/nominal frequency for Xeon Gold 6433N is 2000 MHz
+            MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
+            # Base/nominal frequency for Xeon 6780E is 2000 MHz
             # Intel doesn't expose base_frequency easily, so we hardcode it
             NOMINAL_FREQ_KHZ=2000000
             
@@ -46,13 +46,13 @@ detect_platform() {
                 MIN_FREQ_KHZ=$(echo "$avail_freqs" | awk '{print $NF}')
             else
                 MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
-                MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3600000")
+                MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
             fi
             NOMINAL_FREQ_KHZ=2000000
         else
             # Generic fallback
             MIN_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo "800000")
-            MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3600000")
+            MAX_FREQ_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo "3000000")
             NOMINAL_FREQ_KHZ=2000000
         fi
     else
@@ -74,7 +74,7 @@ usage() {
     cat <<EOF
 Usage: sudo $SCRIPT_NAME [nominal|min]
 
-Sets CPU frequency for all CPUs on Intel Xeon Gold 6433N.
+Sets CPU frequency for all CPUs on Intel Xeon 6780E (288 logical CPUs).
 
 Platform: $PLATFORM (driver: $DRIVER, pstate mode: ${INTEL_PSTATE_MODE:-unknown})
 CPU Frequencies:
@@ -141,8 +141,8 @@ set_governor() {
     local success=0
     local fail=0
 
-    # Handle systems with many CPUs (up to cpu63)
-    for cpu_num in $(seq 0 63); do
+    # Handle systems with many CPUs (up to cpu287)
+    for cpu_num in $(seq 0 287); do
         cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
         cpufreq_dir="$cpu_dir/cpufreq"
         
@@ -240,8 +240,8 @@ set_frequency() {
     local success_count=0
     local fail_count=0
 
-    # Handle systems with many CPUs (up to cpu63)
-    for cpu_num in $(seq 0 63); do
+    # Handle systems with many CPUs (up to cpu287)
+    for cpu_num in $(seq 0 287); do
         cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
         cpufreq_dir="$cpu_dir/cpufreq"
 
@@ -312,7 +312,7 @@ verify_frequency() {
     sleep 2
 
     # Sample a few CPUs for verification (first, middle, last)
-    local sample_cpus="0 31 63"
+    local sample_cpus="0 71 143 215 287"
 
     printf "  %-6s %-12s %10s %10s %10s\n" "CPU" "Governor" "Min" "Max" "Current"
     printf "  %-6s %-12s %10s %10s %10s\n" "---" "--------" "---" "---" "-------"

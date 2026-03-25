@@ -18,8 +18,8 @@ fi
 
 case "$1" in
     nominal)
-        TARGET_FREQ=2300000
-        echo "Setting all CPUs to NOMINAL frequency: 2300 MHz"
+        TARGET_FREQ=2000000
+        echo "Setting all CPUs to NOMINAL frequency: 2000 MHz"
         ;;
     min)
         TARGET_FREQ=800000

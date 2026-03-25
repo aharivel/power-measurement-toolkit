@@ -11,7 +11,7 @@ fi
 
 # Set all CPUs to userspace governor first
 echo "Setting all CPUs to userspace governor..."
-for cpu_num in $(seq 0 63); do
+for cpu_num in $(seq 0 287); do
     cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
     if [ -d "$cpu_dir" ] && [ -f "$cpu_dir/cpufreq/scaling_governor" ]; then
         echo "userspace" > "$cpu_dir/cpufreq/scaling_governor"
@@ -22,7 +22,7 @@ echo ""
 
 # Set frequency limits for all CPUs
 echo "Setting frequency limits to 800 MHz for all CPUs..."
-for cpu_num in $(seq 0 63); do
+for cpu_num in $(seq 0 287); do
     cpu_dir="/sys/devices/system/cpu/cpu${cpu_num}"
     cpufreq_dir="$cpu_dir/cpufreq"
     

@@ -32,24 +32,26 @@ Examples:
     # Show CPU topology
     sudo $SCRIPT_NAME topology
 
-    # Isolate CPUs 4-39 (keep 0-3 for housekeeping)
-    sudo $SCRIPT_NAME isolate 4-39
+    # Isolate all CPUs except core 0 (NUMA0) and core 72 (NUMA1)
+    sudo $SCRIPT_NAME isolate 1-71,73-143,144-287
 
     # Restore normal scheduling
     sudo $SCRIPT_NAME restore
 
 Notes:
-    System has 64 CPUs (0-63) - Dell PowerEdge XR8620t, Intel Xeon Gold 6433N:
-    - CPU 0-31: Physical cores 0-31 (thread 0)
-    - CPU 32-63: Physical cores 0-31 (thread 1)
+    System has 288 CPUs (0-287) - Intel Xeon 6780E, 2 NUMA nodes:
+    - NUMA 0 physical:  CPU 0-71
+    - NUMA 1 physical:  CPU 72-143
+    - NUMA 0 (cont.):   CPU 144-215
+    - NUMA 1 (cont.):   CPU 216-287
 
     For isolation, typically use:
-    - CPUs 0-3: Housekeeping (OS, monitoring tool)
-    - CPUs 4-63: Isolated for workload
+    - CPUs 0,72: Housekeeping (one core per NUMA node)
+    - CPUs 1-71,73-143,144-287: Isolated for workload
 
     This uses cpusets for isolation (doesn't require reboot).
     For persistent isolation across reboots, use kernel parameter:
-      isolcpus=4-63
+      isolcpus=1-71,73-143,144-287
 EOF
     exit 1
 }
@@ -176,9 +178,8 @@ isolate_cpus() {
 
     setup_cpuset_cgroup
 
-    # Parse CPU list to determine housekeeping CPUs
-    # For simplicity, assume housekeeping is 0-3 if isolating 4-39
-    local housekeeping_cpus="0-3"
+    # Housekeeping: CPU 0 (NUMA0) and CPU 72 (NUMA1)
+    local housekeeping_cpus="0,72"
 
     echo "Creating cpuset hierarchy..."
 
@@ -186,7 +187,7 @@ isolate_cpus() {
     if [ ! -d /sys/fs/cgroup/cpuset/housekeeping ]; then
         mkdir -p /sys/fs/cgroup/cpuset/housekeeping
         echo "$housekeeping_cpus" > /sys/fs/cgroup/cpuset/housekeeping/cpuset.cpus
-        echo "0" > /sys/fs/cgroup/cpuset/housekeeping/cpuset.mems
+        echo "0-1" > /sys/fs/cgroup/cpuset/housekeeping/cpuset.mems
         echo "  ✓ Created housekeeping cpuset: $housekeeping_cpus"
     fi
 
@@ -194,7 +195,7 @@ isolate_cpus() {
     if [ ! -d /sys/fs/cgroup/cpuset/isolated ]; then
         mkdir -p /sys/fs/cgroup/cpuset/isolated
         echo "$isolated_cpus" > /sys/fs/cgroup/cpuset/isolated/cpuset.cpus
-        echo "0" > /sys/fs/cgroup/cpuset/isolated/cpuset.mems
+        echo "0-1" > /sys/fs/cgroup/cpuset/isolated/cpuset.mems
         echo "  ✓ Created isolated cpuset: $isolated_cpus"
     fi
 

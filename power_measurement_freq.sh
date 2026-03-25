@@ -2,7 +2,9 @@
 
 # Power Measurement CPU Frequency Toggle Script
 # Toggles between minimum (800 MHz) and nominal (2000 MHz) frequencies
-# Designed for Intel Xeon Gold 6433N with 64 cores
+# Designed for Intel Xeon 6780E with 288 physical cores (no HT)
+# NUMA 0: CPUs 0-71, 144-215
+# NUMA 1: CPUs 72-143, 216-287
 
 set -euo pipefail
 
@@ -10,8 +12,8 @@ SCRIPT_NAME=$(basename "$0")
 
 # Configuration
 MIN_FREQ_KHZ=800000    # 800 MHz
-NOMINAL_FREQ_KHZ=2000000 # 2000 MHz
-CPU_COUNT=64           # Number of CPUs (0-63)
+NOMINAL_FREQ_KHZ=2000000 # 2000 MHz (base frequency for Xeon 6780E)
+CPU_COUNT=288          # Number of logical CPUs (0-287)
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -25,7 +27,7 @@ usage() {
 Usage: sudo $SCRIPT_NAME [min|nominal|status]
 
 Power Measurement CPU Frequency Toggle Script
-For Intel Xeon Gold 6433N with intel_cpufreq driver
+For Intel Xeon 6780E with intel_cpufreq driver (288 logical CPUs)
 
 Arguments:
     min       Set all CPUs to minimum frequency (800 MHz)
@@ -113,8 +115,8 @@ show_status() {
     
     echo ""
     
-    # Sample a few CPUs
-    sample_cpus="0 15 31 47 63"
+    # Sample a few CPUs across both NUMA nodes
+    sample_cpus="0 71 143 215 287"
     
     printf "%-6s %-12s %-10s %-10s %-10s\n" "CPU" "Governor" "Min" "Max" "Current"
     printf "%-6s %-12s %-10s %-10s %-10s\n" "---" "--------" "---" "---" "-------"

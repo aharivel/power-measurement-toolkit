@@ -16,9 +16,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNED_BASE_DIR="/etc/tuned"
 
-# CPU frequency values (kHz)
+# CPU frequency values (kHz) for Intel Xeon 6780E
 MIN_FREQ=800000
-NOMINAL_FREQ=2300000
+NOMINAL_FREQ=2000000
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -36,11 +36,11 @@ create_profile_test1_c6_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 1: Idle with C6 state, Nominal frequency (2300 MHz)
+# Test 1: Idle with C6 state, Nominal frequency (2000 MHz)
 #
 
 [main]
-summary=Power Test 1: Idle C6 @ 2300MHz
+summary=Power Test 1: Idle C6 @ 2000MHz
 
 [cpu]
 governor=userspace
@@ -59,14 +59,14 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (2000 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states (including C6)
@@ -162,11 +162,11 @@ create_profile_test2_c1_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 2: Idle with C1 state, Nominal frequency (2300 MHz)
+# Test 2: Idle with C1 state, Nominal frequency (2000 MHz)
 #
 
 [main]
-summary=Power Test 2: Idle C1 @ 2300MHz
+summary=Power Test 2: Idle C1 @ 2000MHz
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -183,14 +183,14 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (2000 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
         # Set min/max first to remove restrictions
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Disable C1E and C6, keep only C1
@@ -303,11 +303,11 @@ create_profile_test3_stress_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 3: CPU Stress test, Nominal frequency (2300 MHz)
+# Test 3: CPU Stress test, Nominal frequency (2000 MHz)
 #
 
 [main]
-summary=Power Test 3: Stress @ 2300MHz
+summary=Power Test 3: Stress @ 2000MHz
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -324,13 +324,13 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (2000 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
@@ -423,12 +423,12 @@ create_profile_test4_dpdk_nominal() {
 
     cat > "$profile_dir/tuned.conf" <<'EOF'
 #
-# Test 4: DPDK workload, Nominal frequency (2300 MHz)
+# Test 4: DPDK workload, Nominal frequency (2000 MHz)
 # With CPU isolation
 #
 
 [main]
-summary=Power Test 4: DPDK @ 2300MHz
+summary=Power Test 4: DPDK @ 2000MHz
 include=cpu-partitioning
 
 [cpu]
@@ -436,16 +436,16 @@ governor=userspace
 energy_perf_bias=performance
 
 [variables]
-# Isolate CPUs 4-19 (physical cores, thread 0) for DPDK
-# Keep 0-3 for housekeeping
-isolated_cores=4-19
+# Housekeeping: CPU 0 (NUMA0) and CPU 72 (NUMA1) only
+# Isolate all other CPUs: 1-71, 73-143, 144-287 (no HT on Xeon 6780E, all are physical cores)
+isolated_cores=1-71,73-143,144-287
 
 [script]
 script=${i:PROFILE_DIR}/script.sh
 
 [bootloader]
 # Requires reboot to take effect
-cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+cmdline_isolation=nohz_full=1-71,73-143,144-287 isolcpus=1-71,73-143,144-287 rcu_nocbs=1-71,73-143,144-287
 EOF
 
     cat > "$profile_dir/script.sh" <<'EOF'
@@ -456,13 +456,13 @@ start() {
     # Disable turbo
     echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true
 
-    # Set frequency to nominal (2300 MHz)
+    # Set frequency to nominal (2000 MHz)
     for cpu_dir in /sys/devices/system/cpu/cpu[0-9]*; do
         [ -d "$cpu_dir/cpufreq" ] || continue
         echo userspace > "$cpu_dir/cpufreq/scaling_governor" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
-        echo 2300000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_min_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_max_freq" 2>/dev/null || true
+        echo 2000000 > "$cpu_dir/cpufreq/scaling_setspeed" 2>/dev/null || true
     done
 
     # Enable all C-states
@@ -508,13 +508,14 @@ governor=userspace
 energy_perf_bias=performance
 
 [variables]
-isolated_cores=4-19
+# Isolate NUMA0 physical CPUs 4-71 for DPDK (keep 0-3 for housekeeping)
+isolated_cores=4-71
 
 [script]
 script=${i:PROFILE_DIR}/script.sh
 
 [bootloader]
-cmdline_isolation=nohz_full=4-19 isolcpus=4-19 rcu_nocbs=4-19
+cmdline_isolation=nohz_full=1-71,73-143,144-287 isolcpus=1-71,73-143,144-287 rcu_nocbs=1-71,73-143,144-287
 EOF
 
     cat > "$profile_dir/script.sh" <<'EOF'
@@ -596,19 +597,19 @@ main() {
     echo ""
     echo "Available profiles:"
     echo "  Test 1 (Idle C6):"
-    echo "    - powertest-1-c6-nominal  (2300 MHz)"
+    echo "    - powertest-1-c6-nominal  (2000 MHz)"
     echo "    - powertest-1-c6-min      (800 MHz)"
     echo ""
     echo "  Test 2 (Idle C1):"
-    echo "    - powertest-2-c1-nominal  (2300 MHz)"
+    echo "    - powertest-2-c1-nominal  (2000 MHz)"
     echo "    - powertest-2-c1-min      (800 MHz)"
     echo ""
     echo "  Test 3 (Stress):"
-    echo "    - powertest-3-stress-nominal  (2300 MHz)"
+    echo "    - powertest-3-stress-nominal  (2000 MHz)"
     echo "    - powertest-3-stress-min      (800 MHz)"
     echo ""
     echo "  Test 4 (DPDK):"
-    echo "    - powertest-4-dpdk-nominal  (2300 MHz)"
+    echo "    - powertest-4-dpdk-nominal  (2000 MHz)"
     echo "    - powertest-4-dpdk-min      (800 MHz)"
     echo ""
     echo "Usage:"
