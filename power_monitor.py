@@ -28,11 +28,19 @@ class PowerMonitor:
         self.running = False
         self.measurements = []
 
-        # RAPL paths - discover all packages (multi-socket support)
-        self.rapl_base = Path("/sys/class/powercap/intel-rapl")
-        self.rapl_energy_files = sorted(
-            self.rapl_base.glob("intel-rapl:*/energy_uj")
-        )
+        # RAPL paths - discover all top-level packages (multi-socket support)
+        # Uses /sys/devices/virtual/powercap to avoid symlink traversal issues
+        # with /sys/class/powercap. Scans intel-rapl:0, :1, ... until missing.
+        self.rapl_base = Path("/sys/devices/virtual/powercap/intel-rapl")
+        self.rapl_energy_files = []
+        pkg_idx = 0
+        while True:
+            energy_file = self.rapl_base / f"intel-rapl:{pkg_idx}" / "energy_uj"
+            if energy_file.exists():
+                self.rapl_energy_files.append(energy_file)
+                pkg_idx += 1
+            else:
+                break
 
         # Previous RAPL reading for delta calculation (summed across all packages)
         self.prev_rapl_energy = None
