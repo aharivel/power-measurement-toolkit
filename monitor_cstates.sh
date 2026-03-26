@@ -147,7 +147,7 @@ show_summary() {
     done
 
     # Print summary
-    for state in POLL C1 C1E C6; do
+    for state in POLL C1 C1E C6S C6SP; do
         count=${state_counts["$state"]:-0}
         if [ $count -gt 0 ]; then
             printf "  %-6s: %2d CPUs\n" "$state" "$count"

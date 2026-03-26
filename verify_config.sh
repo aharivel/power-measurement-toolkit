@@ -157,9 +157,9 @@ check_cstate_config() {
 
     # Provide test guidance
     echo ""
-    if [[ " ${enabled_states[@]} " =~ " C6 " ]]; then
-        echo "  → Configuration suitable for Test 1 (C6 deep sleep)"
-    elif [[ ! " ${enabled_states[@]} " =~ " C6 " ]] && [[ " ${enabled_states[@]} " =~ " C1 " ]]; then
+    if [[ " ${enabled_states[@]} " =~ " C6S " ]] || [[ " ${enabled_states[@]} " =~ " C6SP " ]]; then
+        echo "  → Configuration suitable for Test 1 (C6S/C6SP deep sleep)"
+    elif [[ " ${enabled_states[@]} " =~ " C1 " ]]; then
         echo "  → Configuration suitable for Test 2 (C1 shallow sleep)"
     fi
 }
@@ -248,11 +248,11 @@ generate_summary() {
 
     # Check C-states
     if [ -f /sys/devices/system/cpu/cpu0/cpuidle/state3/disable ]; then
-        c6_disabled=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state3/disable)
-        if [ "$c6_disabled" = "0" ]; then
-            echo "  ✓ C6 enabled (suitable for Test 1)"
+        c6s_disabled=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state3/disable)
+        if [ "$c6s_disabled" = "0" ]; then
+            echo "  ✓ C6S enabled (suitable for Test 1)"
         else
-            echo "  ✓ C6 disabled (suitable for Test 2)"
+            echo "  ✓ C6S disabled (suitable for Test 2)"
         fi
     fi
 

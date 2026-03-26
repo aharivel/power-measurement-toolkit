@@ -40,7 +40,7 @@ create_profile_test1_c6_nominal() {
 #
 
 [main]
-summary=Power Test 1: Idle C6 @ 2000MHz
+summary=Power Test 1: Idle C6 @ 2200MHz
 
 [cpu]
 governor=userspace
@@ -166,7 +166,7 @@ create_profile_test2_c1_nominal() {
 #
 
 [main]
-summary=Power Test 2: Idle C1 @ 2000MHz
+summary=Power Test 2: Idle C1 @ 2200MHz
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -311,7 +311,7 @@ create_profile_test3_stress_nominal() {
 #
 
 [main]
-summary=Power Test 3: Stress @ 2000MHz
+summary=Power Test 3: Stress @ 2200MHz
 [cpu]
 governor=userspace
 energy_perf_bias=performance
@@ -432,7 +432,7 @@ create_profile_test4_dpdk_nominal() {
 #
 
 [main]
-summary=Power Test 4: DPDK @ 2000MHz
+summary=Power Test 4: DPDK @ 2200MHz
 include=cpu-partitioning
 
 [cpu]

@@ -70,10 +70,10 @@ c6_sec=$((c6_time / 1000000))
 c1_sec=$((c1_time / 1000000))
 
 echo "  C1 time:  ${c1_sec}s"
-echo "  C6 time:  ${c6_sec}s"
+echo "  C6S time:  ${c6_sec}s"
 
 if [ $c6_time -gt $c1_time ]; then
-    echo "  → CPU 0 is spending more time in C6 (deep sleep) ✓"
+    echo "  → CPU 0 is spending more time in C6SS (deep sleep) ✓"
 elif [ $c1_time -gt 0 ]; then
     echo "  → CPU 0 is spending more time in C1 (shallow sleep)"
 else

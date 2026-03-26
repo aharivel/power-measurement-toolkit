@@ -89,7 +89,7 @@ if [ -d /sys/devices/system/cpu/cpu0/cpuidle ]; then
     for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
         if [ -f "$state_dir/name" ]; then
             name=$(cat "$state_dir/name")
-            if [ "$name" = "C6" ]; then
+            if [ "$name" = "C6S" ] || [ "$name" = "C6SP" ] || [ "$name" = "C6" ]; then
                 c6_found=true
                 break
             fi
@@ -97,9 +97,9 @@ if [ -d /sys/devices/system/cpu/cpu0/cpuidle ]; then
     done
 
     if [ "$c6_found" = true ]; then
-        print_check "ok" "C6 state available"
+        print_check "ok" "C6S/C6SP states available (module/package deep sleep)"
     else
-        print_check "warn" "C6 state not found (check BIOS C-States setting)"
+        print_check "warn" "C6S/C6SP states not found (check BIOS C-States setting)"
     fi
 else
     print_check "error" "cpuidle interface not found"

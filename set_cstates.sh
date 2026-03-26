@@ -18,15 +18,15 @@ Configure CPU C-states (idle states) for testing.
 
 Arguments:
     c1      Allow only C1 state (shallow sleep, fast wake-up)
-            - Disables: C1E, C6
+            - Disables: C1E, C6S, C6SP
             - Use for Test 2
 
-    c6      Allow C6 state (deep sleep, slower wake-up)
-            - Enables: C1, C1E, C6 (all states)
+    c6      Allow C6S/C6SP states (deep sleep, slower wake-up)
+            - Enables: C1, C1E, C6S, C6SP (all states)
             - Use for Test 1
 
     all     Enable all C-states (default behavior)
-            - Enables: POLL, C1, C1E, C6
+            - Enables: POLL, C1, C1E, C6S, C6SP
 
 Requirements:
     - Must run as root (sudo)
@@ -38,11 +38,14 @@ Examples:
     sudo $SCRIPT_NAME all    # Enable all states (default)
 
 Notes:
-    C-state levels (from shallowest to deepest):
-    - POLL (state0): CPU polls, no power saving
-    - C1 (state1): CPU halted, immediate wake-up (~1us latency)
-    - C1E (state2): Enhanced C1 with lower voltage (~4us latency)
-    - C6 (state3): Deep sleep, high power saving (~170us latency)
+    C-state levels on Intel Xeon 6780E (from shallowest to deepest):
+    - POLL  (state0): CPU polls, no power saving (0us latency)
+    - C1    (state1): CPU halted, immediate wake-up (1us latency)
+    - C1E   (state2): Enhanced C1 with lower voltage (2us latency)
+    - C6S   (state3): Module-scoped deep sleep — all 4 cores in a module
+                      must request C6S before the module+L2 powers down (270us latency)
+    - C6SP  (state4): Package-scoped deep sleep — all modules must enter C6S
+                      before the entire socket enters the deepest power state (310us latency)
 
     Deeper states save more power but have higher wake-up latency.
 EOF
@@ -88,20 +91,18 @@ set_cstate_for_cpu() {
 configure_c1_mode() {
     echo "Configuring C1 mode (shallow sleep only)..."
     echo "  Enabling: POLL, C1"
-    echo "  Disabling: C1E, C6"
+    echo "  Disabling: C1E, C6S, C6SP"
     echo ""
 
     local cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* | wc -l)
     local success_count=0
 
     for cpu_num in $(seq 0 $((cpu_count - 1))); do
-        # Enable POLL and C1
         set_cstate_for_cpu "$cpu_num" "POLL" 0 || true
         set_cstate_for_cpu "$cpu_num" "C1" 0 || true
-
-        # Disable C1E and C6
         set_cstate_for_cpu "$cpu_num" "C1E" 1 || true
-        set_cstate_for_cpu "$cpu_num" "C6" 1 || true
+        set_cstate_for_cpu "$cpu_num" "C6S" 1 || true
+        set_cstate_for_cpu "$cpu_num" "C6SP" 1 || true
 
         ((success_count++))
     done
@@ -110,40 +111,40 @@ configure_c1_mode() {
 }
 
 configure_c6_mode() {
-    echo "Configuring C6 mode (deep sleep allowed)..."
-    echo "  Enabling: POLL, C1, C1E, C6"
+    echo "Configuring C6S/C6SP mode (deep sleep allowed)..."
+    echo "  Enabling: POLL, C1, C1E, C6S, C6SP"
     echo ""
 
     local cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* | wc -l)
     local success_count=0
 
     for cpu_num in $(seq 0 $((cpu_count - 1))); do
-        # Enable all states
         set_cstate_for_cpu "$cpu_num" "POLL" 0 || true
         set_cstate_for_cpu "$cpu_num" "C1" 0 || true
         set_cstate_for_cpu "$cpu_num" "C1E" 0 || true
-        set_cstate_for_cpu "$cpu_num" "C6" 0 || true
+        set_cstate_for_cpu "$cpu_num" "C6S" 0 || true
+        set_cstate_for_cpu "$cpu_num" "C6SP" 0 || true
 
         ((success_count++))
     done
 
-    echo "Configured $success_count CPUs for C6 mode"
+    echo "Configured $success_count CPUs for C6S/C6SP mode"
 }
 
 configure_all_mode() {
     echo "Enabling all C-states (default mode)..."
-    echo "  Enabling: POLL, C1, C1E, C6"
+    echo "  Enabling: POLL, C1, C1E, C6S, C6SP"
     echo ""
 
     local cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* | wc -l)
     local success_count=0
 
     for cpu_num in $(seq 0 $((cpu_count - 1))); do
-        # Enable all states
         set_cstate_for_cpu "$cpu_num" "POLL" 0 || true
         set_cstate_for_cpu "$cpu_num" "C1" 0 || true
         set_cstate_for_cpu "$cpu_num" "C1E" 0 || true
-        set_cstate_for_cpu "$cpu_num" "C6" 0 || true
+        set_cstate_for_cpu "$cpu_num" "C6S" 0 || true
+        set_cstate_for_cpu "$cpu_num" "C6SP" 0 || true
 
         ((success_count++))
     done
@@ -206,7 +207,7 @@ main() {
             configure_c6_mode
             verify_cstates
             echo ""
-            echo "✓ C-states configured for Test 1 (C6 enabled - deep sleep)"
+            echo "✓ C-states configured for Test 1 (C6S/C6SP enabled - deep sleep)"
             ;;
         all)
             configure_all_mode
